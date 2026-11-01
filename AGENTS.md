@@ -140,7 +140,7 @@ Reusable logic lives in `src/`; notebooks are for exploration and should import 
 │   └── processed/     # cleaned datasets and generated artifacts
 ├── results/           # model evaluations, figures, and reports
 ├── models/            # saved models and forecast artifacts
-├── frontend/          # planned React and TypeScript application
+├── frontend/          # React + TypeScript website (synced copy; see Website)
 └── infra/             # planned AWS deployment configuration
 ```
 
@@ -202,7 +202,10 @@ contract review. Production location IDs and permit codes require team review.
 Coordination status is recorded in `docs/api_proposal.md`; the setup guide must
 remain usable for teammates starting interface work with the sample catalog.
 `not_implemented` means no recommendation evaluation is available;
-`no_suitable_location` is reserved for a future evaluated empty result.
+`no_suitable_location` is reserved for a future evaluated empty result;
+`predictions_unavailable` means eligible parking exists but has no estimate.
+The ranking statuses, `RecommendationResponse.status` and the website's
+`ApiStatus` must match (`tests/test_ranking.py` checks this).
 
 ### Parking patterns and benchmarks — Issue #11
 
@@ -426,9 +429,85 @@ DS3 code-review skill remain required before requesting review.
   jupyter lab notebooks/
   ```
 
-- Commands for the React frontend and future forecasting deployment should be
-  added after those components are implemented and tested. Backend and parking
-  analysis commands are documented above.
+### Website — Issue #20
+
+`frontend/` is a one-way copy of
+[dylanwang-main/ParkSmart-Website](https://github.com/dylanwang-main/ParkSmart-Website),
+which is synced with Google AI Studio. **Never edit files in `frontend/`**; the
+next sync overwrites them. Change ParkSmart-Website, then from the repo root:
+
+```bash
+scripts/sync_frontend.sh            # or --ref <branch|commit>, --source <clone>
+```
+
+It needs bash, `tar` and `rsync` (macOS/Linux, or WSL/Git Bash on Windows).
+The script copies tracked files only, drops AI Studio's `bun.lock`, keeps local
+`node_modules/`, `dist/` and `.env.local`, refreshes `package-lock.json`, and runs
+the tests, type check and build. Review `git diff -- frontend` before committing.
+
+Run the website (Node 20.19+ or 22.12+), from `frontend/`:
+
+```bash
+npm ci
+npm run dev       # http://localhost:3000, on the backend CORS allowlist
+npm test          # Vitest
+npm run lint      # TypeScript type check
+npm run build
+```
+
+`VITE_API_BASE_URL` (default `http://127.0.0.1:8000`) sets the backend; override it
+in `frontend/.env.local`, never with secrets. Searches use labeled sample data
+unless `VITE_RECOMMENDATION_SOURCE=api`, which sends them to
+`POST /recommendations` (`frontend/src/api/recommendations.ts`) and never falls
+back to sample data. Website data marked sample in `frontend/README.md` is not a
+real prediction. Website pins must use registry `location_id` values; a test in
+`tests/test_location_registry.py` checks this.
+
+### Location registry — Issue #20
+
+`config/locations.json` holds every parking location with a stable
+`location_id`, its standardized dataset facilities, coordinates and
+`registry_status`; `src/location_registry.py` validates it. Check it against the
+integrated dataset with `python -m src.location_registry`; tests:
+`python -m pytest tests/test_location_registry.py -q`. Never rename or reuse a
+`location_id`. Every dataset facility must map to exactly one location. Keep
+predictions keyed by facility/category/subtype/level and attach `location_id`
+with `location_groups()`; only `supported` locations may be recommended.
+Recent observations are not proof of current use. See
+`docs/location_registry.md`.
+
+### Eligibility and ranking — Issue #20
+
+`src/eligibility.check_eligibility()` returns `allowed`, `not_allowed` or
+`needs_verification` for a permit (`A`, `B`, `S`, `SR`, `D`, `V`), parking group
+and time; only `allowed` is recommended, and unknown or conflicting rules are
+never treated as allowed. With a departure, every rule boundary during the
+stay is checked; all boundaries must stay on the 30-minute grid
+(`BOUNDARY_GRID_MINUTES`). Holidays and quarters come from the official 2026-27
+calendar in `src/ucsd_calendar.py` (verified Sep 21, 2026 to Sep 6, 2027);
+update it from the Registrar's calendar each year. `src/availability.py`'s
+`AvailabilityEstimator` attaches historical-average estimates for an arrival
+time and labels any estimate that uses another survey time or a fallback
+average; any model following the prediction contract in its docstring can
+replace the default `HistoricalAverage`, and NaN predictions stay missing.
+The proposed shared interface for all teammates is in `docs/api_proposal.md`. `src/ranking.recommend()` takes latest-quarter groups from
+`current_groups()` with those estimates, and returns a first choice and
+distinct backup (`to_api()` matches `ParkingChoice`); limited estimates and
+unverified dates appear in explanations and limitations. Missing estimates are
+reported, never filled in. Rule sources, weights, walking assumptions and
+tie-breaking are in `docs/recommendations.md`; update it and the rule tests
+when permit rules change. Tests:
+`python -m pytest tests/test_eligibility.py tests/test_ranking.py tests/test_availability.py tests/test_ucsd_calendar.py -q`.
+`src/recommender.Recommender.from_files()` loads all of this once and answers
+requests with `.recommend(permit, arrival, destination)`; try it with
+`python -m src.recommender --permit S --arrival 2026-11-03T09:00 --lat 32.8811 --lon -117.2376`
+(needs the integrated dataset). Tests: `python -m pytest tests/test_recommender.py -q`.
+`docs/recommendations_handoff.md` shows how `POST /recommendations` should call
+it and lists the open interface questions.
+
+- Commands for future forecasting deployment should be added after it is
+  implemented and tested. Backend and parking analysis commands are documented
+  above.
 
 ## Testing
 
