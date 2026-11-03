@@ -106,7 +106,7 @@ struct RecommendationResponse: Codable {
 
     func validate() throws {
         guard schema_version == "0.1", time_zone == "America/Los_Angeles",
-              ["ready", "no_suitable_location", "not_implemented"].contains(status),
+              ["ready", "no_suitable_location", "not_implemented", "predictions_unavailable"].contains(status),
               Self.parseDate(arrival_time) != nil,
               first_choice?.isValid ?? true, backup_choice?.isValid ?? true
         else { throw AppError.invalidResponse }

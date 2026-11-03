@@ -1,28 +1,31 @@
 # iOS prototype status
 
-The active phone app uses SwiftUI and MapKit in mobile/ios/.
-Android support is not included in this prototype.
+The phone prototype uses SwiftUI and MapKit in mobile/ios/.
+Android support is not included.
 
 ## Verified on Hanrong's Mac
 
-- Xcode build succeeded and the app ran in the iPhone 17 simulator.
-- Xcode tests passed using Command-U.
-- Sample first-choice and backup cards displayed and could be selected.
-- The map could be moved and zoomed.
-- The app fetched GET /locations from the local FastAPI backend.
-- Stopping the backend produced a connection-error message.
-- Restarting the backend and reloading restored the location catalog.
+- Xcode build and native tests passed.
+- App ran in the iPhone 17 simulator.
+- Sample cards displayed and could be selected.
+- Stopping the backend displayed a connection error; restarting restored access.
+- GET /locations loaded the backend's verified catalog and parking markers.
+- POST /recommendations returned first-choice and distinct backup cards.
+- Historical availability estimates displayed from the shared backend.
+- Selecting the backup card updated its selection state and moved the map
+  to its orange marker.
+- All four Python mobile fixture tests passed after the backend integration.
 
-## Current limitations
+## Limitations and remaining review work
 
-- The backend location catalog still contains fictional sample locations.
-- Verified parking coordinates are unavailable, so parking markers and
-  marker/card interaction have not been demonstrated.
-- Availability and walking estimates remain unknown.
-- The backend recommendation endpoint is not implemented.
-- Recommendation cards use clearly labeled bundled examples.
-- Production location IDs, permit fields, and framework confirmation
-  still require team coordination.
-- A teammate setup walkthrough and DS3 code review remain pending.
-
-Prediction, permit eligibility, and ranking belong in the shared backend.
+- Destination input currently sends a name without coordinates, so walking
+  estimates remain unavailable and ranking cannot use destination distance.
+- Availability estimates come from historical surveys, not live occupancy.
+- Prediction, permit eligibility, and ranking belong in the shared backend.
+- Bundled sample mode remains separate and visibly labeled.
+- Local recommendations require the processed analysis dataset; follow
+  docs/pipeline.md to prepare it and restart the backend afterward.
+- Physical-device operation and Android support have not been demonstrated.
+- Framework confirmation with Yra and a teammate setup walkthrough remain pending.
+- Update the README and outdated connection messages before requesting review.
+- Complete the review report and final checks before opening the PR.

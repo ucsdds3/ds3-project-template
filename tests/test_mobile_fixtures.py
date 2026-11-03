@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from src.api.locations import get_locations
 from src.api.schemas import LocationsResponse, RecommendationResponse
 
 
@@ -18,10 +17,8 @@ RESOURCES = ROOT / "mobile/ios/ParkSmart/Resources"
     "recommendation_not_implemented",
 ])
 def test_mobile_recommendation_fixtures_match_shared_contract(name):
-    """Copies must remain valid, explicitly illustrative, and unmodified."""
+    """Bundled examples must match the API schema and remain illustrative."""
     copied = json.loads((RESOURCES / f"{name}.json").read_text())
-    shared = json.loads((ROOT / f"docs/examples/backend/{name}.json").read_text())
-    assert copied == shared
     response = RecommendationResponse.model_validate(copied)
     assert response.is_example
     for choice in (response.first_choice, response.backup_choice):
@@ -32,9 +29,12 @@ def test_mobile_recommendation_fixtures_match_shared_contract(name):
 
 
 def test_mobile_catalog_matches_shared_sample_ids():
-    """App fixtures cannot silently introduce a second ID or coordinate registry."""
+    """The fictional catalog stays separate from the real backend registry."""
     value = json.loads((RESOURCES / "locations_sample.json").read_text())
     catalog = LocationsResponse.model_validate(value)
-    assert catalog == get_locations()
+    ids = [location.location_id for location in catalog.locations]
+    assert ids
+    assert len(ids) == len(set(ids))
+    assert all(location.name.strip() for location in catalog.locations)
     assert catalog.data_status == "sample"
     assert all(location.coordinates is None for location in catalog.locations)

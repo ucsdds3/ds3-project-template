@@ -17,8 +17,8 @@ Press **Command-R**. No signing team is required for a simulator. If none appear
 install an iOS runtime in Xcode Settings → Platforms/Components. Physical-device
 signing uses your own local team; never commit personal signing changes.
 
-The project was prepared in Linux without Xcode. A successful Mac build, native
-test run and simulator screenshots are still required before PR review.
+The app has been built and tested on Hanrong's Mac in the iPhone 17 simulator.
+See STATUS.md for demonstrated behavior and remaining limitations.
 
 ## Demonstrate
 
@@ -57,9 +57,9 @@ python -m uvicorn src.api.main:app --reload
 
 In **Connection**, enable **Use shared API**, use `http://127.0.0.1:8000`, and
 tap **Done**. This requests GET /locations. The simulator uses the Mac's loopback
-service. The current backend still returns a sample catalog, visibly labeled.
+service. The current backend returns the shared verified location catalog.
 Failures remain visible; there is no silent fallback to bundled samples. Reopen
-Connection and tap Done to retry. Connectivity must be tested on the user's Mac.
+Connection and tap Done to retry. Simulator connectivity has been demonstrated.
 
 Physical iPhone: run the server with `--host 0.0.0.0 --port 8000` and use
 `http://<Mac-LAN-address>:8000` from the same trusted network. Phone localhost
@@ -70,9 +70,8 @@ The plist permits local networking, without a global HTTP bypass. Physical-devic
 connectivity is a separate check and is not certified by a simulator build.
 
 The URL is stored in simulator/device preferences, not in Git. Recommendations
-reset to disabled on launch. Enable POST /recommendations only after Daira
-confirms that route/method and response contract: it does not exist in this
-snapshot. HTTP 404/405/501 produces an unavailable message. No local prediction,
+reset to disabled on launch. Enable POST /recommendations in Connection
+to request first-choice and backup options from the shared backend. HTTP 404/405/501 produces an unavailable message. No local prediction,
 ranking, permit filtering, walking calculation or routing is implemented.
 
 ## Build and test
@@ -118,3 +117,20 @@ Yra handles approval/merge. See STATUS.md for unverified and blocked work.
 - Views: form, selection, connection settings and map.
 - Resources: exact shared JSON fixtures and fictional catalog.
 - ParkSmartTests: native contract tests; Xcode project includes a shared scheme.
+
+## Local recommendation data
+
+Recommendations require data/processed/pipeline/analysis_dataset.csv.
+Follow docs/pipeline.md to download the source workbooks and build that file.
+Restart the backend after preparing the dataset. Missing prediction resources
+can produce HTTP 503 even when the location catalog works.
+
+The current phone form sends the destination name without coordinates.
+Walking estimates therefore remain unavailable, and destination distance is
+not used for ranking. Availability is a historical estimate, not live occupancy.
+Supported backend permit codes are A, B, S, SR, D and V.
+
+For a simulator demonstration, enable both API toggles in Connection, enter
+a destination and supported permit code, and tap Request parking plan.
+Select the backup card and confirm that its marker becomes orange and the
+map moves to that location.

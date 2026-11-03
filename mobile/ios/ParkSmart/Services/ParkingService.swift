@@ -10,7 +10,7 @@ enum AppError: LocalizedError {
         case .invalidResponse:
             return "The response does not match the proposed 0.1 API contract."
         case .recommendationsUnavailable:
-            return "Recommendations are not connected. The supplied backend implements /locations only."
+            return "Recommendations are disabled or unavailable. Check Connection settings and the backend."
         case .http(let status):
             return "The backend returned HTTP \(status). Check the server and API contract."
         case .exampleFailure:

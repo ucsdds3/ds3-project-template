@@ -145,7 +145,7 @@ struct PlannerView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.characters)
             }
-            Text("Permit codes are pending team confirmation. Entering a code does not establish eligibility.")
+            Text("Supported codes: A, B, S, SR, D, V. Eligibility is checked by the backend; follow posted parking signs.")
                 .font(.caption).foregroundStyle(.secondary)
             if !model.validInput {
                 Text("Enter a destination and permit (1–200 characters each).")
@@ -161,8 +161,9 @@ struct PlannerView: View {
                 notice("EXAMPLE ONLY · Fixed fixture; your inputs were not evaluated.", icon: "testtube.2")
             }
             Text(result.status == "ready" ? "Your parking options"
-                 : result.status == "not_implemented" ? "Recommendations unavailable"
-                 : "No suitable recommendation")
+                : result.status == "predictions_unavailable" ? "Availability estimates unavailable"
+                : result.status == "not_implemented" ? "Recommendations unavailable"
+                : "No suitable recommendation")
                 .font(.title2.bold())
             Text(result.explanation).font(.subheadline)
             Text("Response arrival: \(result.arrival_time) · \(result.time_zone)")
@@ -237,9 +238,9 @@ struct PlannerView: View {
                     Text("Simulator: use the Mac's localhost. Physical iPhone: use the Mac's LAN address on the same network.")
                         .font(.caption)
                 }
-                Section("Future integration") {
+                Section("Recommendations") {
                     Toggle("Enable POST /recommendations", isOn: $model.recommendationsEnabled)
-                    Text("Leave off for the current backend. Enable only after Daira confirms the POST route and contract. No local ranking or eligibility logic is implemented.")
+                    Text("Enable to request parking options from the shared backend. Historical estimates require the backend dataset.")
                         .font(.caption)
                 }
             }
