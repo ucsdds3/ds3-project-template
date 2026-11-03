@@ -175,6 +175,29 @@ python -m src.download_qpass
 
 ## Running things
 
+### Availability prediction artifacts - Issue #18
+
+Run `python -m src.train_availability` after building the integrated CSV.
+Flags: `--dataset`, `--output-dir`, `--model-dir`. Defaults write local comparisons
+to `results/issue18/` and v2 pickle artifacts to `models/issue18/` (gitignored).
+Selection uses only supported validation rows, with the exact same support rule
+as `PredictionService.support_labels`: observed exact group, time, weekday and
+quarter; blank quarter uses historical fallback, including for regressors.
+The corrected selected model is historical averages. Unsupported requests stay
+NaN. Experimental unsupported-row scores do not determine selection. Serving
+fits use all records after frozen evaluation. Feature mode is stored explicitly;
+training and serving use `select_features`. Artifact Python/numpy/pandas/sklearn/scipy/joblib
+versions must match exactly; regenerate older/incompatible artifacts.
+Serve once-loaded artifacts with
+`python -m uvicorn src.api.saved_model:create_saved_app --factory`.
+The factory passes AvailabilityEstimator to the existing `create_app(estimator=...)`;
+no retraining occurs. Missing/incompatible artifacts stop saved-model startup.
+Regressions are described as model estimates based on historical surveys, with
+limitations only for actual fallback/time/coverage issues. See
+`docs/issue18_predictions.md` for results and `docs/recommendations_handoff.md`
+for current merged integration. Tests:
+`python -m pytest tests/test_availability_prediction.py -q`.
+
 ### Local FastAPI backend and website integration — Issues #12 and #19
 
 From the root with requirements installed:
@@ -207,8 +230,8 @@ Dylan's synced website using `VITE_RECOMMENDATION_SOURCE=api npm run dev` from
 already sends the implemented JSON contract. See `docs/backend.md` for setup,
 architecture, failure handling and local browser testing; `docs/api_proposal.md`
 records current interfaces and Daira's local verification. A ready
-AvailabilityEstimator wrapping Vivaan's saved model can be supplied to
-`create_app(estimator=...)` once his loader/metadata are available.
+AvailabilityEstimator wrapping the saved Issue #18 model is supplied by
+`src.api.saved_model:create_saved_app` via `create_app(estimator=...)`.
 
 ### Parking patterns and benchmarks — Issue #11
 
