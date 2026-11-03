@@ -175,6 +175,29 @@ python -m src.download_qpass
 
 ## Running things
 
+### Native iPhone prototype
+
+`mobile/ios/` contains the SwiftUI/MapKit iOS 17+ prototype and shared Xcode
+project/scheme. Framework confirmation with Yra remains pending. On Mac, run
+`open mobile/ios/ParkSmart.xcodeproj`, select an iPhone simulator, then Command-R.
+No third-party Swift packages. Setup, xcodebuild/native test commands, API
+networking and demo steps are in `mobile/ios/README.md`; blockers are in STATUS.md.
+
+Default mode uses visibly labeled JSON samples from shared backend examples.
+Unknown values remain unknown. MapKit campus lookup only frames the basemap;
+parking markers require a verified catalog with valid coordinates. Selection
+uses opaque location_id values. The separate API client supports GET /locations
+and prepares future POST /recommendations, disabled because it is absent now.
+Set the backend URL in Connection; local preferences/build/signing state stay
+out of Git. Native iOS requires no browser CORS changes. Do not recreate backend
+prediction, eligibility, ranking or routing, or fabricate coordinates or metrics.
+
+Fixture checks:
+`python -m pytest tests/test_mobile_fixtures.py tests/test_api.py tests/test_api_schemas.py -q`.
+Before PR review, run Xcode build/tests and demonstrate on Mac, full pytest and
+the mentor DS3 skill; report blocked checks honestly. Linux preparation is not
+an iOS build or simulator run. Keep code_review.md local.
+
 ### Local FastAPI backend and proposed interface contract - Issue #12
 
 After installing `requirements.txt`, run from the repository root:
