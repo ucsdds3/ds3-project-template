@@ -1,9 +1,27 @@
 import Combine
 import Foundation
+import MapKit
 
 @MainActor
 final class PlannerModel: ObservableObject {
-    @Published var destination = ""
+    @Published var destination = "" {
+        didSet {
+            if destination != oldValue {
+                destinationCoordinates = nil
+                destinationResults = []
+                destinationSearch?.cancel()
+                destinationSearch = nil
+                searchingDestination = false
+                destinationSearchError = nil
+                invalidate()
+            }
+        }
+    }
+    @Published private(set) var destinationCoordinates: Coordinates?
+    @Published private(set) var destinationResults: [MKMapItem] = []
+    @Published private(set) var searchingDestination = false
+    @Published private(set) var destinationSearchError: String?
+    private var destinationSearch: MKLocalSearch?
     @Published var permit = ""
     @Published var arrival = Date()
     @Published var useAPI = false
@@ -20,7 +38,8 @@ final class PlannerModel: ObservableObject {
     private var work: Task<Void, Never>?
 
     var validInput: Bool {
-        [destination, permit].allSatisfy {
+        (!useAPI || destinationCoordinates?.isValid == true)
+            && [destination, permit].allSatisfy {
             let text = $0.trimmingCharacters(in: .whitespacesAndNewlines)
             return !text.isEmpty && text.count <= 200
         }
@@ -67,7 +86,8 @@ final class PlannerModel: ObservableObject {
         invalidate()
         let request = RecommendationRequest(
             destination: destination.trimmingCharacters(in: .whitespacesAndNewlines),
-            arrival: arrival, permit: permit.trimmingCharacters(in: .whitespacesAndNewlines)
+            arrival: arrival, permit: permit.trimmingCharacters(in: .whitespacesAndNewlines),
+            coordinates: useAPI ? destinationCoordinates : nil
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -86,6 +106,59 @@ final class PlannerModel: ObservableObject {
                 busy = false
             }
         }
+    }
+
+    /// Search for destinations; parking IDs still come only from the backend.
+    func searchDestination() {
+        let query = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        destinationSearch?.cancel()
+        destinationCoordinates = nil
+        destinationResults = []
+        destinationSearchError = nil
+        invalidate()
+
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query + ", UC San Diego"
+        let search = MKLocalSearch(request: request)
+        destinationSearch = search
+        searchingDestination = true
+
+        Task {
+            do {
+                let response = try await search.start()
+                guard destinationSearch === search else { return }
+                destinationResults = response.mapItems.filter {
+                    let point = $0.placemark.coordinate
+                    return Coordinates(latitude: point.latitude,
+                                       longitude: point.longitude).isValid
+                }
+                if destinationResults.isEmpty {
+                    destinationSearchError = "No places found. Try a more specific name."
+                }
+                searchingDestination = false
+                destinationSearch = nil
+            } catch {
+                guard destinationSearch === search else { return }
+                destinationSearchError = "Destination search failed. Check your connection and try again."
+                searchingDestination = false
+                destinationSearch = nil
+            }
+        }
+    }
+
+    func selectDestination(_ item: MKMapItem) {
+        let point = item.placemark.coordinate
+        let coordinates = Coordinates(latitude: point.latitude, longitude: point.longitude)
+        guard coordinates.isValid else { return }
+        destinationSearch?.cancel()
+        destinationSearch = nil
+        destination = item.name ?? destination
+        destinationCoordinates = coordinates
+        destinationResults = []
+        searchingDestination = false
+        destinationSearchError = nil
+        invalidate()
     }
 
     func saveConnection() {

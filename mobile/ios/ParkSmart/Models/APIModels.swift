@@ -56,8 +56,9 @@ struct RecommendationRequest: Codable {
     static let campusTimeZone = TimeZone(identifier: "America/Los_Angeles")!
 
     /// Encode the selected instant with UCSD's offset, including DST.
-    init(destination: String, arrival: Date, permit: String) {
-        self.destination = PlaceInput(name: destination, coordinates: nil)
+    init(destination: String, arrival: Date, permit: String,
+         coordinates: Coordinates? = nil) {
+        self.destination = PlaceInput(name: destination, coordinates: coordinates)
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = Self.campusTimeZone
         arrival_time = formatter.string(from: arrival)

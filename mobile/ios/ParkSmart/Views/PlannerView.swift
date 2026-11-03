@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 
 struct PlannerView: View {
     @StateObject private var model = PlannerModel()
@@ -111,8 +112,7 @@ struct PlannerView: View {
                 connectionView
             }
             .task { model.loadLocations() }
-            .onChange(of: model.destination) { _, _ in model.invalidate() }
-            .onChange(of: model.permit) { _, _ in model.invalidate() }
+                        .onChange(of: model.permit) { _, _ in model.invalidate() }
             .onChange(of: model.arrival) { _, _ in model.invalidate() }
             .onChange(of: model.scenario) { _, _ in model.invalidate() }
         }
@@ -130,6 +130,47 @@ struct PlannerView: View {
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Destination")
                     .focused($inputFocused)
+
+                if model.useAPI {
+                    Button("Find destination") {
+                        inputFocused = false
+                        model.searchDestination()
+                    }
+                    .disabled(model.destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || model.searchingDestination)
+
+                    if model.searchingDestination {
+                        ProgressView("Finding places…")
+                    }
+
+                    ForEach(model.destinationResults.indices, id: \.self) { index in
+                        let item = model.destinationResults[index]
+                        Button {
+                            inputFocused = false
+                            model.selectDestination(item)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.name ?? "Place").font(.subheadline.bold())
+                                Text(item.placemark.title ?? "")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                        }
+                    }
+
+                    if model.destinationCoordinates != nil {
+                        Label("Destination selected from Apple Maps", systemImage: "checkmark.circle")
+                            .font(.caption).foregroundStyle(.green)
+                    } else {
+                        Text("Find and select a place before requesting parking.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    if let message = model.destinationSearchError {
+                        Text(message).font(.caption).foregroundStyle(.red)
+                    }
+                }
             }
             DatePicker("Arrival · UCSD time", selection: $model.arrival,
                        displayedComponents: [.date, .hourAndMinute])
