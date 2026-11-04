@@ -141,6 +141,7 @@ Reusable logic lives in `src/`; notebooks are for exploration and should import 
 ├── results/           # model evaluations, figures, and reports
 ├── models/            # saved models and forecast artifacts
 ├── frontend/          # React + TypeScript website (synced copy; see Website)
+├── mobile/ios/        # SwiftUI/MapKit iPhone prototype (see Native iPhone prototype)
 └── infra/             # planned AWS deployment configuration
 ```
 
@@ -175,28 +176,56 @@ python -m src.download_qpass
 
 ## Running things
 
+### Availability prediction artifacts - Issue #18
+
+Run `python -m src.train_availability` after building the integrated CSV.
+Flags: `--dataset`, `--output-dir`, `--model-dir`. Defaults write local comparisons
+to `results/issue18/` and v2 pickle artifacts to `models/issue18/` (gitignored).
+Selection uses only supported validation rows, with the exact same support rule
+as `PredictionService.support_labels`: observed exact group, time, weekday and
+quarter; blank quarter uses historical fallback, including for regressors.
+The corrected selected model is historical averages. Unsupported requests stay
+NaN. Experimental unsupported-row scores do not determine selection. Serving
+fits use all records after frozen evaluation. Feature mode is stored explicitly;
+training and serving use `select_features`. Artifact Python/numpy/pandas/sklearn/scipy/joblib
+versions must match exactly; regenerate older/incompatible artifacts.
+Serve once-loaded artifacts with
+`python -m uvicorn src.api.saved_model:create_saved_app --factory`.
+The factory passes AvailabilityEstimator to the existing `create_app(estimator=...)`;
+no retraining occurs. Missing/incompatible artifacts stop saved-model startup.
+Regressions are described as model estimates based on historical surveys, with
+limitations only for actual fallback/time/coverage issues. See
+`docs/issue18_predictions.md` for results and `docs/recommendations_handoff.md`
+for current merged integration. Tests:
+`python -m pytest tests/test_availability_prediction.py -q`.
+
 ### Native iPhone prototype
 
 `mobile/ios/` contains the SwiftUI/MapKit iOS 17+ prototype and shared Xcode
-project/scheme. Framework confirmation with Yra remains pending. On Mac, run
-`open mobile/ios/ParkSmart.xcodeproj`, select an iPhone simulator, then Command-R.
-No third-party Swift packages. Setup, xcodebuild/native test commands, API
-networking and demo steps are in `mobile/ios/README.md`; blockers are in STATUS.md.
+project/scheme (Mac with Xcode 15+; no third-party Swift packages or API keys).
+Run `open mobile/ios/ParkSmart.xcodeproj`, select the ParkSmart scheme and an
+iPhone simulator, then Command-R. Setup, xcodebuild build/test commands,
+physical-device networking and demo steps are in `mobile/ios/README.md`;
+verified behavior and open items (including framework confirmation with Yra)
+are in `mobile/ios/STATUS.md`.
 
-Default mode uses visibly labeled JSON samples from shared backend examples.
-Unknown values remain unknown. MapKit campus lookup only frames the basemap;
-parking markers require a verified catalog with valid coordinates. Selection
-uses opaque location_id values. The separate API client supports GET /locations
-and includes a POST /recommendations client; verify compatibility before enabling it.
-Set the backend URL in Connection; local preferences/build/signing state stay
-out of Git. Native iOS requires no browser CORS changes. Do not recreate backend
-prediction, eligibility, ranking or routing, or fabricate coordinates or metrics.
+Default mode uses visibly labeled JSON samples from shared backend examples;
+API mode never silently falls back to them. Start the backend as described in
+the FastAPI section below and set its URL in Connection. GET /locations loads
+the verified catalog; POST /recommendations sends the Apple Maps-selected
+destination name and coordinates and needs the integrated dataset (otherwise
+503). Walking times are straight-line estimates and availability is a
+historical estimate, not live occupancy. Unknown values remain unknown.
+MapKit campus lookup only frames the basemap; parking markers require verified
+catalog entries with valid coordinates. Selection uses opaque location_id
+values. URL preferences and build/signing state stay out of Git. Native iOS
+requires no browser CORS changes. Do not recreate backend prediction,
+eligibility, ranking or routing, or fabricate coordinates or metrics.
 
 Fixture checks:
 `python -m pytest tests/test_mobile_fixtures.py tests/test_api.py tests/test_api_schemas.py -q`.
-Before PR review, run Xcode build/tests and demonstrate on Mac, full pytest and
-the mentor DS3 skill; report blocked checks honestly. Linux preparation is not
-an iOS build or simulator run. Keep code_review.md local.
+Before PR review, run the Xcode build/tests on a Mac, full pytest and the
+mentor DS3 skill; report blocked checks honestly. Keep code_review.md local.
 
 ### Local FastAPI backend and website integration — Issues #12 and #19
 
@@ -230,8 +259,8 @@ Dylan's synced website using `VITE_RECOMMENDATION_SOURCE=api npm run dev` from
 already sends the implemented JSON contract. See `docs/backend.md` for setup,
 architecture, failure handling and local browser testing; `docs/api_proposal.md`
 records current interfaces and Daira's local verification. A ready
-AvailabilityEstimator wrapping Vivaan's saved model can be supplied to
-`create_app(estimator=...)` once his loader/metadata are available.
+AvailabilityEstimator wrapping the saved Issue #18 model is supplied by
+`src.api.saved_model:create_saved_app` via `create_app(estimator=...)`.
 
 ### Parking patterns and benchmarks — Issue #11
 
