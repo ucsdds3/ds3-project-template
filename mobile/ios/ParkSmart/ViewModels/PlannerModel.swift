@@ -45,7 +45,19 @@ final class PlannerModel: ObservableObject {
         }
     }
 
+    private let serviceOverride: (any ParkingService)?
+
+    init(serviceOverride: (any ParkingService)? = nil) {
+        self.serviceOverride = serviceOverride
+    }
+
+    // Allows tests to await completion without timing-based sleeps.
+    func waitForCurrentWork() async {
+        await work?.value
+    }
+
     private func service() throws -> any ParkingService {
+        if let serviceOverride { return serviceOverride }
         if useAPI {
             return try APIParkingService(baseURL: baseURL,
                                          recommendationsEnabled: recommendationsEnabled)

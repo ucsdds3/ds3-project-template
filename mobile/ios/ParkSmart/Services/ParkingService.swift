@@ -32,8 +32,15 @@ protocol ParkingService {
 struct APIParkingService: ParkingService {
     let baseURL: URL
     let recommendationsEnabled: Bool
+    private let transport: (URLRequest) async throws -> (Data, URLResponse)
 
-    init(baseURL: String, recommendationsEnabled: Bool) throws {
+    init(
+        baseURL: String,
+        recommendationsEnabled: Bool,
+        transport: @escaping (URLRequest) async throws -> (Data, URLResponse) = {
+            try await URLSession.shared.data(for: $0)
+        }
+    ) throws {
         guard let parts = URLComponents(string: baseURL),
               ["http", "https"].contains(parts.scheme?.lowercased() ?? ""),
               parts.host != nil, parts.user == nil, parts.password == nil,
@@ -41,6 +48,7 @@ struct APIParkingService: ParkingService {
         else { throw AppError.invalidURL }
         self.baseURL = url
         self.recommendationsEnabled = recommendationsEnabled
+        self.transport = transport
     }
 
     func locations() async throws -> LocationsResponse {
@@ -67,7 +75,7 @@ struct APIParkingService: ParkingService {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport(request)
         guard let http = response as? HTTPURLResponse else { throw AppError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             if path == "recommendations" && [404, 405, 501].contains(http.statusCode) {

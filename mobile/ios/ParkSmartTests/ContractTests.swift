@@ -101,3 +101,137 @@ final class ContractTests: XCTestCase {
         }
     }
 }
+
+
+extension ContractTests {
+    func testTransportSendsCoordinatesAndDecodesResponse() async throws {
+        let expected = try response(choice, status: "ready")
+        let data = try JSONEncoder().encode(expected)
+        let service = try APIParkingService(
+            baseURL: "https://parksmart.invalid",
+            recommendationsEnabled: true
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/recommendations")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"),
+                           "application/json")
+            let body = try XCTUnwrap(request.httpBody)
+            let sent = try JSONDecoder().decode(RecommendationRequest.self, from: body)
+            XCTAssertEqual(sent.destination.coordinates?.latitude, 32.88)
+            XCTAssertEqual(sent.destination.coordinates?.longitude, -117.24)
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200,
+                                         httpVersion: nil, headerFields: nil)!)
+        }
+        let value = try await service.recommendations(
+            RecommendationRequest(
+                destination: "Test destination", arrival: Date(), permit: "S",
+                coordinates: Coordinates(latitude: 32.88, longitude: -117.24)
+            )
+        )
+        XCTAssertEqual(value.status, "ready")
+        XCTAssertEqual(value.first_choice?.location.id, "sample-a")
+        XCTAssertEqual(value.first_choice?.availabilityText, "Unavailable")
+    }
+
+    func testTransportPreservesBackendErrorDetail() async throws {
+        let service = try APIParkingService(
+            baseURL: "https://parksmart.invalid",
+            recommendationsEnabled: true
+        ) { request in
+            let data = Data(#"{"detail":"Historical estimates are unavailable."}"#.utf8)
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 503,
+                                         httpVersion: nil, headerFields: nil)!)
+        }
+        do {
+            _ = try await service.recommendations(
+                RecommendationRequest(destination: "Test", arrival: Date(), permit: "S")
+            )
+            XCTFail("Expected backend error")
+        } catch AppError.backend(let status, let message) {
+            XCTAssertEqual(status, 503)
+            XCTAssertEqual(message, "Historical estimates are unavailable.")
+        }
+    }
+
+    func testValidationArrayUsesHelpfulFallback() async throws {
+        let service = try APIParkingService(
+            baseURL: "https://parksmart.invalid",
+            recommendationsEnabled: true
+        ) { request in
+            let data = Data(#"{"detail":[{"msg":"Invalid permit"}]}"#.utf8)
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 422,
+                                         httpVersion: nil, headerFields: nil)!)
+        }
+        do {
+            _ = try await service.recommendations(
+                RecommendationRequest(destination: "Test", arrival: Date(), permit: "XYZ")
+            )
+            XCTFail("Expected validation error")
+        } catch AppError.backend(let status, let message) {
+            XCTAssertEqual(status, 422)
+            XCTAssertTrue(message.contains("permit code"))
+        }
+    }
+
+    @MainActor
+    func testCancelledOldResponseCannotReplaceNewResult() async throws {
+        let old = try response(choice, status: "ready")
+        let newerChoice = choice.replacingOccurrences(of: "sample-a", with: "sample-b")
+        let newer = try response(newerChoice, status: "ready")
+        let started = expectation(description: "Old request started")
+        let service = DelayedTestService(old: old, newer: newer, started: started)
+        let model = PlannerModel(serviceOverride: service)
+        model.destination = "Test destination"
+        model.permit = "old"
+        model.plan()
+
+        await fulfillment(of: [started], timeout: 3)
+        // Capture the old task before starting the replacement.
+        let oldFinished = Task { await model.waitForCurrentWork() }
+        await Task.yield()
+
+        model.permit = "new"
+        model.plan()
+        await model.waitForCurrentWork()
+        XCTAssertEqual(model.result?.first_choice?.location.id, "sample-b")
+
+        await service.releaseOldResponse()
+        await oldFinished.value
+        XCTAssertEqual(model.result?.first_choice?.location.id, "sample-b")
+        XCTAssertFalse(model.busy)
+        XCTAssertNil(model.error)
+    }
+}
+
+// Intentionally ignores cancellation to simulate a late server response.
+private actor DelayedTestService: ParkingService {
+    let old: RecommendationResponse
+    let newer: RecommendationResponse
+    let started: XCTestExpectation
+    private var continuation: CheckedContinuation<RecommendationResponse, Never>?
+
+    init(old: RecommendationResponse, newer: RecommendationResponse,
+         started: XCTestExpectation) {
+        self.old = old
+        self.newer = newer
+        self.started = started
+    }
+
+    func locations() async throws -> LocationsResponse {
+        throw AppError.exampleFailure
+    }
+
+    func recommendations(_ request: RecommendationRequest) async throws
+        -> RecommendationResponse {
+        if request.permit_type == "new" { return newer }
+        return await withCheckedContinuation {
+            continuation = $0
+            started.fulfill()
+        }
+    }
+
+    func releaseOldResponse() {
+        continuation?.resume(returning: old)
+        continuation = nil
+    }
+}
