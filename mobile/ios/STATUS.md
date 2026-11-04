@@ -5,7 +5,12 @@ Android support is not included.
 
 ## Verified on Hanrong's Mac
 
-- Xcode build and native tests passed.
+- Xcode build and all 15 native tests passed.
+- Apple Maps destination selection sends coordinates to the shared backend;
+  walking estimates were demonstrated in the simulator.
+- Invalid permit input displayed a helpful validation message.
+- Automated tests cover successful API decoding, coordinate encoding,
+  backend error details, validation fallback, and stale response cancellation.
 - App ran in the iPhone 17 simulator.
 - Sample cards displayed and could be selected.
 - Stopping the backend displayed a connection error; restarting restored access.
@@ -18,8 +23,7 @@ Android support is not included.
 
 ## Limitations and remaining review work
 
-- Destination input currently sends a name without coordinates, so walking
-  estimates remain unavailable and ranking cannot use destination distance.
+- Walking times are straight-line estimates, not routed walking directions.
 - Availability estimates come from historical surveys, not live occupancy.
 - Prediction, permit eligibility, and ranking belong in the shared backend.
 - Bundled sample mode remains separate and visibly labeled.
@@ -27,5 +31,4 @@ Android support is not included.
   docs/pipeline.md to prepare it and restart the backend afterward.
 - Physical-device operation and Android support have not been demonstrated.
 - Framework confirmation with Yra and a teammate setup walkthrough remain pending.
-- Update the README and outdated connection messages before requesting review.
-- Complete the review report and final checks before opening the PR.
+- Draft PR #24 is open; mentor review remains pending.

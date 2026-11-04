@@ -125,12 +125,15 @@ Follow docs/pipeline.md to download the source workbooks and build that file.
 Restart the backend after preparing the dataset. Missing prediction resources
 can produce HTTP 503 even when the location catalog works.
 
-The current phone form sends the destination name without coordinates.
-Walking estimates therefore remain unavailable, and destination distance is
-not used for ranking. Availability is a historical estimate, not live occupancy.
+In API mode, use Find destination and select an Apple Maps result.
+The app sends the selected destination name and coordinates to the shared backend,
+which calculates recommendations and walking estimates. Walking times are
+straight-line estimates, not routed walking directions.
+Availability is a historical estimate, not live occupancy.
 Supported backend permit codes are A, B, S, SR, D and V.
 
 For a simulator demonstration, enable both API toggles in Connection, enter
-a destination and supported permit code, and tap Request parking plan.
+a destination, tap Find destination, select a result, enter a supported permit
+code, and tap Request parking plan.
 Select the backup card and confirm that its marker becomes orange and the
 map moves to that location.
