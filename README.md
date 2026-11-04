@@ -1,67 +1,88 @@
-# DS3 Project Template
+# ParkSmart
 
-A clean starter template for data science and machine learning projects at UC San Diego's DS3.
+ParkSmart is a UC San Diego parking decision project. It cleans historical QPASS
+observations, standardizes parking labels, and attaches defensible parking
+capacities before availability analysis. The project includes the data pipeline, historical availability benchmarks,
+local FastAPI recommendations, and a synced React website. Deployment and
+improved prediction artifacts are separate work.
 
-## What this template includes
+## Local backend (Issues #12 and #19)
 
-- A sensible folder structure for notebooks, source code, data, and outputs
-- A Python environment file for quick setup
-- A .gitignore tailored for secrets, notebooks, and generated artifacts
-- A small starter package and test example
+After installing `requirements.txt` in your virtual environment, run from the
+repository root:
 
-## Suggested repository structure
-
-```text
-.
-├── README.md
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── notebooks/
-│   └── README.md
-├── src/
-│   ├── __init__.py
-│   └── example.py
-├── frontend/
-│   └── README.md
-├── infra/
-│   └── README.md
-├── data/
-│   ├── raw/
-│   └── processed/
-├── results/
-├── models/
-└── tests/
+```bash
+python -m uvicorn src.api.main:app --reload
 ```
 
-- `frontend/` is for UI/UX code and web app assets.
-- `infra/` is for deployment scripts, cloud config, and infrastructure as code for AWS/GCP.
+Open <http://127.0.0.1:8000/docs> to try GET `/health`, GET `/locations`, and
+POST `/recommendations`. Locations use the shared real registry. Historical
+recommendations use the existing pipeline dataset and baseline, loaded once at
+startup. Missing resources return explicit 503s; no sample prediction fallback
+is used. The API never builds the dataset or runs notebooks per request.
 
-## Quick start
+See [backend setup, learning walkthrough, and interface contract](docs/backend.md)
+for examples and [the short Dylan/Hanrong proposal](docs/api_proposal.md).
+Run backend tests:
 
-1. Create a virtual environment:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
-   **.env files are generally not shared on GitHub; they are included here only as an example template.**
-4. Start working in notebooks or in the src package.
+```bash
+python -m pytest tests/test_api.py tests/test_api_schemas.py -q
+```
 
-## Repository guidelines
+## Setup and capacity matching (Issue #4)
 
-- Keep notebooks for exploration and visualization.
-- Put reusable logic in src so notebooks stay readable.
-- Do not commit secrets, API keys, or large data files.
-- Use clear filenames and short, documented functions.
-- Add tests for any core logic that will be reused.
+Run from the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m src.download_qpass
+python -m src.download_inventory
+python -m src.run_capacity_matching --rebuild-inventory
+python scripts/prepare_capacity_deliverables.py
+python -m pytest -q
+```
+
+Downloads require access to the public UCSD archive. Original workbooks stay local
+in `data/raw/QPASS/` and `data/raw/inventory/` and are never modified. The Inventory
+source manifest is generated at `results/capacity_matching/inventory_sources.csv`.
+No API key is needed for this pipeline; `.env.example` is an optional template.
+
+Capacity selection prefers valid QPASS totals for the exact parking group.
+Missing or demonstrably broken totals may use one compatible same-quarter
+Inventory candidate, explicitly labeled as an assumption. Uncertain scopes,
+conflicting capacities or period metadata remain flagged with unknown selected
+capacity. No cross-quarter carry or fuzzy facility matching is performed.
+
+## Outputs and documentation
+
+### Parking analysis (Issue #11)
+
+After `python -m src.build_dataset`, run `python -m src.parking_analysis`.
+Open `notebooks/11_parking_patterns.ipynb` in VS Code using the `.venv` kernel,
+or execute it with `python scripts/execute_parking_notebook.py`.
+The notebook compares training-only historical averages and linear regression
+using the same later survey dates, with overall and near-full errors.
+Local reports, charts and predictions go to `results/issue11/`.
+See [findings and limitations](docs/issue11_findings.md) for the verified snapshot.
+Notebook execution needs the `ipykernel` and `nbclient` dependencies in
+`requirements.txt`; JupyterLab is optional when using VS Code.
+If PowerShell blocks activation, use `.\.venv\Scripts\python.exe` instead of
+`python` in these commands.
+
+- [Inventory schema, assumptions and run instructions](docs/inventory_audit.md).
+- [Capacity selection results and quarter-level rates](docs/capacity_matching_summary.md).
+- [Packaged datasets and unresolved cases](results/capacity_matching/deliverables/README.md).
+- [QPASS loader schema and source limitations](docs/qpass_schema_audit.md).
+- [Shared standardized-label decisions](docs/issue3_label_decisions.md).
+- [Development conventions](AGENTS.md).
+
+Reusable code lives in `src/`, tests in `tests/`, and exploration in `notebooks/`.
+Intermediate Inventory groups/audits are in `data/interim/inventory/`; batch
+reports are in `results/capacity_matching/batch/`. Delivery copies are compressed
+CSVs in `results/capacity_matching/deliverables/`; pandas reads `.csv.gz` directly.
+Frontend, infrastructure and model folders are placeholders for later work.
 
 ## Git and GitHub workflow for DS3 projects
 
