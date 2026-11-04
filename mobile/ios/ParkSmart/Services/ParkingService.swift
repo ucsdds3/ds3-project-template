@@ -3,6 +3,8 @@ import Foundation
 enum AppError: LocalizedError {
     case invalidURL, invalidResponse, recommendationsUnavailable, http(Int), exampleFailure
 
+    case backend(status: Int, message: String)
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:
@@ -11,6 +13,8 @@ enum AppError: LocalizedError {
             return "The response does not match the proposed 0.1 API contract."
         case .recommendationsUnavailable:
             return "Recommendations are disabled or unavailable. Check Connection settings and the backend."
+        case .backend(_, let message):
+            return message
         case .http(let status):
             return "The backend returned HTTP \(status). Check the server and API contract."
         case .exampleFailure:
@@ -69,7 +73,28 @@ struct APIParkingService: ParkingService {
             if path == "recommendations" && [404, 405, 501].contains(http.statusCode) {
                 throw AppError.recommendationsUnavailable
             }
-            throw AppError.http(http.statusCode)
+            let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let detail = (payload?["detail"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let detail, !detail.isEmpty {
+                throw AppError.backend(status: http.statusCode, message: detail)
+            }
+
+            switch http.statusCode {
+            case 400, 422:
+                throw AppError.backend(
+                    status: http.statusCode,
+                    message: "The server rejected these inputs. Check the destination, arrival time, and permit code (A, B, S, SR, D, or V)."
+                )
+            case 503:
+                throw AppError.backend(
+                    status: http.statusCode,
+                    message: "Historical parking estimates are temporarily unavailable. Try again later. This does not mean parking is full."
+                )
+            default:
+                throw AppError.http(http.statusCode)
+            }
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
