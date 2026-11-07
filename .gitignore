@@ -35,3 +35,24 @@ models/*
 .pytest_cache/
 .coverage
 htmlcov/
+
+# AWS local files
+.aws-sam/
+.serverless/
+
+# IDE
+.vscode/
+.idea/
+
+# Arduino build files
+build/
+*.elf
+*.hex
+
+# Logs / temp files
+*.log
+*.tmp
+*.bak
+
+# CAD temporary/autosave files
+*.autosave
