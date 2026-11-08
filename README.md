@@ -83,7 +83,7 @@ Amazon API Gateway
     ↓
 AWS Lambda
     ↓
-ESP32
+Arduino Uno Q
     ↓
 Servo / Motor Mechanisms
     ↓
