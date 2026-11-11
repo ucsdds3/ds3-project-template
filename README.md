@@ -6,7 +6,7 @@ CoffeeVend is a hardware-focused vending system that dispenses one coffee cup an
 
 The project combines:
 
-- ESP32 embedded programming
+- Arduino Uno Q embedded programming
 - Servo/motor control
 - Sensors
 - CAD and 3D printing
@@ -30,7 +30,7 @@ The final system should connect DS3’s existing website and Supabase backend to
 CoffeeVend is split into several major subsystems:
 
 ### Hardware
-- ESP32 microcontroller
+- Arduino Uno Q microcontroller
 - Servo or motor-driven cup dispenser
 - Servo or motor-driven pod dispenser
 - IR/optical sensors for dispense confirmation
