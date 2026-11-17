@@ -6,20 +6,56 @@ capacities before availability analysis. The project includes the data pipeline,
 local FastAPI recommendations, and a synced React website. Deployment and
 improved prediction artifacts are separate work.
 
-## Local backend (Issues #12 and #19)
+## Local backend (Issues #12, #19 and #26)
 
 After installing `requirements.txt` in your virtual environment, run from the
 repository root:
 
 ```bash
-python -m uvicorn src.api.main:app --reload
+python -m uvicorn src.api.saved_model:create_configured_app --factory --reload
 ```
 
-Open <http://127.0.0.1:8000/docs> to try GET `/health`, GET `/locations`, and
-POST `/recommendations`. Locations use the shared real registry. Historical
+Use a virtual environment (any folder name) with Python and dependency versions
+matching the artifact. For the Lambda Python 3.12 image, generate artifacts in
+its compatible environment. Use OpenSSL and a trusted artifact prepared with
+Vivaan's documented interface. The approved saved estimator is historical
+averages with explicit support limits. See [saved-model setup and verification guide](docs/issue26_handoff.md).
+Check `/readiness` for saved-model readiness; `/health` alone checks liveness.
+The original `python -m uvicorn src.api.main:app --reload` command remains an
+explicit startup-fitted baseline demo, never an automatic saved-model fallback.
+
+Open <http://127.0.0.1:8000/docs> to try GET `/health`, GET `/locations`,
+POST `/recommendations` and POST `/routes`. Locations use the shared real registry. Historical
 recommendations use the existing pipeline dataset and baseline, loaded once at
 startup. Missing resources return explicit 503s; no sample prediction fallback
 is used. The API never builds the dataset or runs notebooks per request.
+
+`POST /trip-alerts` adds optional Open-Meteo hourly forecasts and published UCSD
+construction notices for a selected registry location and/or destination. It is
+shared by the website and iOS app and runs separately from recommendations.
+Source failures, stale caches and dates outside the forecast range are explicit;
+alerts never change parking estimates, eligibility, ranking or routes. See the
+[shared contract, examples and setup](docs/trip_alerts.md),
+[weather source/rules](docs/weather_source.md) and
+[construction coverage/matching](docs/construction_source.md).
+Set `PARKSMART_TRIP_ALERTS_ENABLED=false` to disable external alert calls.
+
+`POST /routes` returns driving and walking routes (free public OSRM servers by
+default, no key needed), and recommendations use mapped walking routes for the
+top picks when routing is enabled; see [routes](docs/routing.md). Routing is
+disabled in the hosted demo, so its walking times are straight-line estimates.
+
+The AWS demo is live at [ParkSmart](https://demo.d2ru7u75tkpr69.amplifyapp.com).
+It uses the hosted FastAPI backend and saved historical-survey model. Public
+searches, recommendation cards, map markers, and walking preferences have been
+checked. Directions are currently unavailable because hosted routing is disabled.
+
+See the [backend deployment instructions](infra/README.md),
+[website update instructions](docs/frontend_deployment.md), and
+[resource log](docs/deployment_resources.md) for setup, updates, cleanup,
+verification results, and remaining limitations. The
+[parking-feed proposal](docs/parking_status.md) remains separate; no live-count
+endpoint is claimed before Hanrong's collector and mappings are ready.
 
 See [backend setup, learning walkthrough, and interface contract](docs/backend.md)
 for examples and [the short Dylan/Hanrong proposal](docs/api_proposal.md).
@@ -83,7 +119,7 @@ Intermediate Inventory groups/audits are in `data/interim/inventory/`; batch
 reports are in `results/capacity_matching/batch/`. Delivery copies are compressed
 CSVs in `results/capacity_matching/deliverables/`; pandas reads `.csv.gz` directly.
 The frontend contains the synced website; model artifacts are generated locally.
-Infrastructure remains planned.
+See the [deployment instructions](infra/README.md) for the current AWS demo.
 
 ## Git and GitHub workflow for DS3 projects
 
@@ -195,3 +231,11 @@ with `python -m uvicorn src.api.saved_model:create_saved_app --factory`.
 The selected model is historical averages, chosen on supported validation rows.
 Exact artifact dependency versions are checked at load; unsupported groups stay
 unknown. Later-quarter accuracy remains unvalidated.
+
+Issue #27 adds [focused recency experiments](docs/issue27_predictions.md),
+an [additional-data assessment](docs/issue27_additional_data.md), and
+[versioned artifact/S3 preparation](docs/model_storage.md). Reproduce the approved
+baseline independently with `python -m src.prepare_prediction_artifact
+--release-id <new-release-id>`; experiments never overwrite the working artifact.
+The prediction-validation workflow can reproduce the public dataset and run all
+checks on a standard Linux runner without AWS deployment.

@@ -129,8 +129,10 @@ Reusable logic lives in `src/`; notebooks are for exploration and should import 
 ├── AGENTS.md
 ├── .env.example
 ├── .gitignore
+├── amplify.yml        # AWS Amplify Hosting build for frontend/ (see Issue #25)
 ├── requirements.txt
 ├── pytest.ini
+├── .github/workflows/ # optional manual Linux prediction verification
 ├── docs/              # data audits, assumptions, and technical documentation
 ├── notebooks/         # exploration, EDA, and modeling experiments
 ├── src/               # reusable data, modeling, and backend code (api/)
@@ -142,7 +144,7 @@ Reusable logic lives in `src/`; notebooks are for exploration and should import 
 ├── models/            # saved models and forecast artifacts
 ├── frontend/          # React + TypeScript website (synced copy; see Website)
 ├── mobile/ios/        # SwiftUI/MapKit iPhone prototype (see Native iPhone prototype)
-└── infra/             # planned AWS deployment configuration
+└── infra/             # planned AWS backend deployment configuration
 ```
 
 Some planned directories may not exist yet. Update this structure as components are added.
@@ -156,6 +158,17 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
+
+Use Python built with OpenSSL and exact dependency/Python versions compatible
+with the artifact. Baseline development supports Python 3.11+; the proposed
+Lambda image uses Python 3.12. Generate Lambda artifacts in its compatible
+environment rather than assuming a local Python version is interchangeable. On
+macOS, `python3` may be Apple's Python 3.9 with LibreSSL, which cannot reach
+TLS 1.3-only services such as the public OSRM routing servers;
+`brew install python@3.12` and create the venv with `python3.12 -m venv .venv`.
+Saved model artifacts store exact library versions, so rerun
+`python -m src.train_availability` after changing Python. Full steps and a TLS
+check command: "Supported Python setup" in `docs/backend.md`.
 
 ### Windows PowerShell
 
@@ -175,6 +188,169 @@ python -m src.download_qpass
 ```
 
 ## Running things
+
+
+### Informational trip alerts — Issue #35
+
+Reusable providers, cache and orchestration live in `src/trip_alerts/`; the
+shared HTTP models are in `src/api/alert_schemas.py`.
+
+`POST /trip-alerts` is the shared website/iOS interface for a registry
+`parking_location_id`, `arrival_time` and optional destination coordinates.
+It is independent of `/recommendations`; source calls never change predictions,
+eligibility, ranking or route geometry. Weather uses Open-Meteo hourly forecasts
+(UTC hour ending at/after arrival, up to the actual returned 16-day range).
+Missing values stay null; ParkSmart rain/heat/wind suggestions are not official
+weather warnings. For an exact-hour arrival, precipitation is explicitly labeled
+as the preceding hour (10:00 arrival means 09:00–10:00); temperature and wind
+refer to the 10:00 sample, not the following hour. UCSD construction layers 0–2
+are requested in WGS84 and matched
+by published effective windows and geometry within 200 m of trip points.
+Published notices do not establish entire-lot closure or route avoidance;
+upstream completeness and update frequency remain unverified.
+
+Sources are cached in memory per process: weather 15 minutes with at most one
+hour stale age, construction 10 minutes with at most 24 hours stale age.
+Failures back off for 30 seconds. Source results distinguish fresh `no_relevant`
+from `partial`, `unavailable`, `out_of_range`, `missing_location` and `stale`.
+Successful retrieval and last-attempt timestamps stay separate. Refreshes have
+four-second source budgets; a bounded two-worker service shares a 6.5-second
+response budget. Source calls do not occur at startup or during recommendations.
+When workers are busy, cache-only reads still serve matching fresh data or
+explicitly stale usable snapshots. They reapply arrival/location matching without
+HTTP calls or changes to retrieval/attempt timestamps; cache misses do not evict
+other entries or start work outside the worker limit.
+`PARKSMART_TRIP_ALERTS_ENABLED=false` disables external alert calls. No new
+dependency, model retraining, paid API or AWS provisioning is added.
+
+See `docs/trip_alerts.md` for requests, response examples, client guidance,
+configuration and Daira's hosted-verification dependency. Run offline checks:
+`python -m pytest tests/test_trip_alert_cache.py tests/test_weather_alerts.py
+tests/test_construction_alerts.py tests/test_trip_alert_api.py
+tests/test_check_trip_alerts.py -q`. Opt-in server smoke check:
+`python -m scripts.check_trip_alerts --base-url http://127.0.0.1:8000`.
+Only run against the actual approved hosted URL when Daira supplies access;
+schema/source checks alone do not prove AWS hosting or a new upstream refresh.
+The proposed contract was shared on Issue #35 with Dylan, Hanrong and Daira.
+Events remain deferred; no weather/construction data enters QPASS training.
+
+### Full AWS deployment — Issue #33
+
+The reviewed demo is deployed in Oregon (`us-west-2`), using stack/ECR
+`parksmart-backend`, private S3 artifacts, and existing mentor-managed runtime
+and CloudFormation roles. Do not create replacement roles. Current URLs, image
+digests, sizes and operator verification are in `docs/deployment_resources.md`.
+Readiness, real first/backup recommendations, public cards/map markers and a
+shorter-walk preference search have passed operator checks. Routing is disabled;
+walks are estimates. Dylan reported a successful public website check. The first
+search after long idle has not been verified within the website's 20-second
+timeout; hosted routes and alerts/failure-state checks remain pending. Automated
+results are recorded in the resource log.
+
+`bash scripts/prepare_lambda_release.sh [new-release-id]` prepares a private
+release in the pinned linux/amd64 Lambda-compatible environment. Generation runs
+offline with read-only dataset input; outputs under `models/issue33/` are ignored.
+Never regenerate a model merely to update frontend or backend application code.
+`bash scripts/build_lambda_serving.sh [release-id] [image-tag]` stages only dependency pins
+in ignored `.lambda-build/` and builds locally. For application updates reusing a
+bundle, use a new image tag; see `infra/README.md`. Check actual serving-image
+readiness with `python3 scripts/check_lambda_local.py` against the local emulator.
+
+Pin deployed images by digest and preserve immutable S3 releases. Send each
+proposed change set to Yra before execution. The approved demo uses shared
+concurrency, API rate 1/burst 2, timeout 30s, memory 1024 MB and seven-day logs;
+no provisioned concurrency. Credits and billing alerts are not spending caps.
+Track resource additions for the account owner's billing review.
+
+Amplify uses manual ZIP deployment to the existing `parksmart-website` app,
+branch `demo`. Build with the deployed API URL and API mode, then upload only
+contents of `frontend/dist/`; follow `docs/frontend_deployment.md`. ZIPs and
+private artifacts must stay out of Git. VITE variables are public, never secrets.
+
+
+### Prediction experiments and versioned storage preparation — Issue #27
+
+`python -m src.prediction_experiments` writes separate diagnostics to
+`results/issue27/` and never changes serving artifacts. It uses the existing
+whole-date development folds with a fixed holdout boundary of 2025-10-08;
+observations on or after that date are excluded even as the archive grows.
+The latest-20%-of-dates rule describes the original Issue #18 split only.
+Regression tests protect this fixed exclusion when later archive dates are added.
+Experiments compare recent-three-year and two-year-half-life averages against
+the approved baseline on identical supported record IDs. Recent estimates fall
+back to full history for exact groups absent recently. All statistics and
+recency reference dates come from training only. See `docs/issue27_predictions.md`
+for the author-declared selection criteria; their pre-execution timing has not
+been independently verified. Both experiments worsen near-full error, sufficient
+to retain historical averages regardless of the 1 pp improvement threshold.
+
+`python -m src.prepare_prediction_artifact --release-id <new-release-id>` fits
+only the approved historical model into a new private `models/issue27/` release.
+It records exact dependency versions, input/source hashes and training coverage.
+It never overwrites Issue #18 files. Pass its `metadata.json` to
+`python -m scripts.prepare_serving_bundle --metadata <metadata-path>
+--artifact <artifact-path> --output-dir <new-bundle-dir> --s3-prefix
+releases/<release-id>` to bind matching model/data/registry files. See
+`docs/model_storage.md` for complete commands, startup settings, IAM and later
+conditional S3 upload instructions. No AWS provisioning or paid usage is enabled.
+
+Tests: `python -m pytest tests/test_prediction_experiments.py
+tests/test_prepare_prediction_artifact.py tests/test_prepare_serving_bundle.py -q`.
+The optional manual `.github/workflows/prediction-validation.yml` reproduces the public
+source pipeline, experiments, release and full tests on a standard Linux runner;
+it runs only for public repositories and uses no AWS credentials, cache or
+Actions artifact storage. The current workflow after `a1da53f` removes encrypted
+release export; generated model/data files stay on the ephemeral runner and only
+aggregate results and metadata are printed to public logs. Earlier run
+42784254791 at `c8ac676` printed recipient-encrypted release ciphertext into public
+Actions logs; it was not privately transmitted. No Actions artifact upload does
+not imply private logs. Yra/the user will delete that earlier run and logs;
+deletion is pending and unconfirmed. The local
+`.venv312/` environment is ignored; use an allowed runtime with the artifact's
+exact versions. Do not change Windows security settings to load blocked modules.
+`docs/issue27_additional_data.md` assesses QPASS, status counts and occupancy
+summaries. Hanrong's multi-snapshot dataset is pending; no status data is merged.
+
+### Configured saved serving and AWS preparation — Issue #26
+
+Use any virtual environment with Python and dependencies matching the artifact;
+the folder name is arbitrary. Lambda Python 3.12 artifacts must be generated in
+its compatible environment. The configured
+entrypoint is `python -m uvicorn src.api.saved_model:create_configured_app --factory`.
+It defaults to saved mode, loads Vivaan's compatible trusted v2 artifact once
+at startup, and enforces `historical_average` as the currently approved model.
+Unsupported exact groups/time/calendar stay unknown under his saved-service
+policy. Never alter compatibility metadata or silently fit a fallback.
+GET `/readiness` is 200 only when catalog and predictions are available; health
+is independent liveness. Bad saved resources leave recommendations/readiness
+503. The original `src.api.main:app` baseline remains available explicitly.
+
+`src/api/settings.py` supports PARKSMART_MODEL_MODE, PARKSMART_APPROVED_MODEL,
+PARKSMART_ARTIFACT_PATH, PARKSMART_DATASET_PATH, PARKSMART_REGISTRY_PATH,
+PARKSMART_BUNDLE_MANIFEST and PARKSMART_CACHE_DIR. Local relative paths resolve
+against the repository; no .env file is loaded implicitly. Existing exact-origin
+CORS configuration remains. The optional S3 manifest downloads private,
+checksummed artifact/dataset/registry files with role-based GetObject access.
+No endpoint accepts uploaded pickles or S3 URLs. `src/api/lambda_handler.py`
+enters lifespan once per cold process and disables repeated Mangum lifespan
+cycles so warm requests reuse resources and do not refit/reload.
+
+`infra/` contains initial SAM/container configuration, serving dependencies,
+deployment gates, fundamentals and cleanup instructions. No deployment or AWS
+calls are authorized by adding those files. Keep DeploymentApproved=no until
+account allowances, open blockers and deployment approval are resolved. The
+Issue #33 demo uses approved shared concurrency, not the earlier reservation. No NAT/paid resources or public data bucket is configured.
+The local bundle helper is `python -m scripts.prepare_serving_bundle --s3-prefix
+releases/<release>`; output `.serving-bundle/` is private/gitignored. It copies
+existing approved resources only, never trains, rebuilds or uploads them.
+
+`docs/parking_status.md` defines a proposed separate source-count contract;
+do not invent feed values, refresh old timestamps or blend them with predictions.
+See `docs/issue26_handoff.md` for saved-mode setup and verification results.
+Run the DS3 review using `docs/codeReviewer.md`; keep its report local.
+Container checks, SAM lint and the Issue #33 deployment have passed operator
+verification; see `docs/deployment_resources.md`. Collector integration remains
+pending.
 
 ### Availability prediction artifacts - Issue #18
 
@@ -253,12 +429,14 @@ Neither means parking is full. Runtime results are `is_example: false`.
 Static examples remain labeled and never provide runtime fallback estimates.
 `not_implemented` is legacy schema compatibility only.
 
-Local CORS permits GET/POST from localhost/127.0.0.1 ports 3000 and 5173. Start
+Local CORS permits GET/POST from localhost/127.0.0.1 ports 3000 and 5173; add
+deployed origins with `PARKSMART_CORS_ORIGINS` (comma-separated exact origins, no
+wildcards; `allowed_origins()` in `src/api/main.py`). Start
 Dylan's synced website using `VITE_RECOMMENDATION_SOURCE=api npm run dev` from
 `frontend/`; do not edit synced website files here. The source website client
 already sends the implemented JSON contract. See `docs/backend.md` for setup,
 architecture, failure handling and local browser testing; `docs/api_proposal.md`
-records current interfaces and Daira's local verification. A ready
+records current interfaces and local verification results. A ready
 AvailabilityEstimator wrapping the saved Issue #18 model is supplied by
 `src.api.saved_model:create_saved_app` via `create_app(estimator=...)`.
 
@@ -516,7 +694,53 @@ unless `VITE_RECOMMENDATION_SOURCE=api`, which sends them to
 `POST /recommendations` (`frontend/src/api/recommendations.ts`) and never falls
 back to sample data. Website data marked sample in `frontend/README.md` is not a
 real prediction. Website pins must use registry `location_id` values; a test in
-`tests/test_location_registry.py` checks this.
+`tests/test_location_registry.py` checks this. In API mode the selected result
+also gets driving/walking routes from `POST /routes` (see Issue #25 below).
+Website changes are made on a branch of ParkSmart-Website, merged there, then
+synced; `--source` syncs a local clone's committed `HEAD` for testing.
+
+### Routes and website hosting — Issue #25
+
+`POST /routes` returns one driving or walking route (GeoJSON `[lon, lat]`
+geometry, meters, miles, minutes, `traffic_aware: false`) between two coordinates.
+Providers live in `src/routing.py`: OpenRouteService (`ORS_API_KEY`) or OSRM
+(public FOSSGIS servers, light use only). Unset means `ors` with a key, otherwise
+`osrm`, so routes work with no setup; `PARKSMART_ROUTING_PROVIDER=none` turns them
+off (503) and recommendations keep working. Keys stay on the backend, never in `VITE_` variables or Git.
+When routing is on, `/recommendations` routes the top 5 locations' walks, then
+any unchecked first choice/backup (`MAX_ROUTING_ROUNDS`, one 8 s budget per
+request via `walk_router`), drops routes over 20 minutes and rescores. Picks
+without a route keep straight-line times labeled unchecked; never say the
+20-minute limit was checked for them (see `docs/recommendations.md`). Every
+FOSSGIS request shares one per-process 1 request/s throttle; routes that snap a
+point over 150 m (walking) / 250 m (driving) are rejected. Tests set
+`PARKSMART_ROUTING_PROVIDER=none` (`tests/conftest.py`), so they never call a
+provider.
+Trips are capped (driving 150 km, walking 5 km straight line), successes are
+cached in memory, and provider errors are logged, not returned. Parking ends are
+registry building points, not verified entrances; responses say so. Never call
+travel times traffic-aware. FOSSGIS needs TLS 1.3; without it (macOS Xcode
+Python 3.9) startup logs a warning and turns routes off (503). At run time only a
+confirmed unsupported-TLS error turns them off; certificate and other SSL errors
+are provider errors and routing stays on. Provider calls never start after their
+request's deadline (8 s per recommendation, 10 s per `/routes` call).
+With a rate-limited provider (public FOSSGIS or ORS, per mode), `/routes` starts
+provider calls at most every 2 s so it cannot starve searches; self-hosted
+servers are not gated. ORS is spaced 1.6 s apart; only its error codes
+2009/2010 mean "no route" (other 404s are 502 config errors). "No route" answers
+are cached for an hour. `PARKSMART_CORS_ORIGINS` entries are normalized like
+browser Origin headers (lowercase, punycode, no default port).
+Card and directions minutes both come from `route_minutes`/`display_minutes`. Contract, configuration, public-server limits,
+deployment plan, Lambda handoff and pilot results: `docs/routing.md`. The
+website's "Fix the map" OSM link lives in ParkSmart-Website (synced);
+copyable JSON is in `docs/examples/backend/route_*.json` (validated by
+`tests/test_api_schemas.py`). Tests:
+`python -m pytest tests/test_routing.py tests/test_api.py -q`.
+
+`amplify.yml` builds `frontend/` on AWS Amplify Hosting (monorepo `appRoot:
+frontend`; set Node.js 22 and `VITE_API_BASE_URL`/`VITE_RECOMMENDATION_SOURCE=api`
+in the Amplify console). Deploy only with funded DS3 AWS access; never enable
+paid usage. Steps, verification and cleanup: `docs/frontend_deployment.md`.
 
 ### Location registry — Issue #20
 
@@ -549,13 +773,18 @@ The proposed shared interface for all teammates is in `docs/api_proposal.md`. `s
 `current_groups()` with those estimates, and returns a first choice and
 distinct backup (`to_api()` matches `ParkingChoice`); limited estimates and
 unverified dates appear in explanations and limitations. Missing estimates are
-reported, never filled in. Rule sources, weights, walking assumptions and
+reported, never filled in. Requests may add `preference` (`shorter_walk`,
+`balanced` default, `more_availability`; `PREFERENCE_WEIGHTS`) and
+`max_walk_minutes` (3–20); responses echo both and add a ranked `options` list
+whose choices carry `rank`, `walking_time_source` and `fit_reason`. Never call
+the availability percentage a probability of finding parking. Rule sources, weights, walking assumptions and
 tie-breaking are in `docs/recommendations.md`; update it and the rule tests
 when permit rules change. Tests:
 `python -m pytest tests/test_eligibility.py tests/test_ranking.py tests/test_availability.py tests/test_ucsd_calendar.py -q`.
 `src/recommender.Recommender.from_files()` loads all of this once and answers
 requests with `.recommend(permit, arrival, destination)`; try it with
 `python -m src.recommender --permit S --arrival 2026-11-03T09:00 --lat 32.8811 --lon -117.2376`
+(optional `--preference shorter_walk|balanced|more_availability`, `--max-walk MINUTES`)
 (needs the integrated dataset). Tests: `python -m pytest tests/test_recommender.py -q`.
 `POST /recommendations` now calls this recommender; the original integration
 handoff is `docs/recommendations_handoff.md`, and current setup/limitations are

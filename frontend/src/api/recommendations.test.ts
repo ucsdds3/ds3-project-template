@@ -6,6 +6,7 @@ import {
   fetchRecommendations,
   parseResponse,
   toApiRequest,
+  toRankedOptions,
   type ApiRecommendationResponse,
 } from './recommendations.ts';
 
@@ -61,6 +62,18 @@ describe('toApiRequest', () => {
     });
   });
 
+  it('leaves out default priority and walking limit so older backends still answer', () => {
+    const body = toApiRequest({ ...REQUEST, priority: 'balanced', maxWalkMinutes: null });
+    expect(body).not.toHaveProperty('preference');
+    expect(body).not.toHaveProperty('max_walk_minutes');
+  });
+
+  it('sends the chosen priority and walking limit', () => {
+    const body = toApiRequest({ ...REQUEST, priority: 'shorter_walk', maxWalkMinutes: 10 });
+    expect(body?.preference).toBe('shorter_walk');
+    expect(body?.max_walk_minutes).toBe(10);
+  });
+
   it('returns null for an unknown destination', () => {
     expect(toApiRequest({ ...REQUEST, destinationId: 'nowhere' })).toBeNull();
   });
@@ -78,13 +91,13 @@ describe('fetchRecommendations', () => {
     if (outcome.kind !== 'ok') return;
     const [first, backup] = outcome.recommendations;
     expect(first.badgeLabel).toBe('First choice');
-    expect(first.estimate).toEqual({ availablePercent: 62, walkingMinutes: 8, isExample: false });
+    expect(first.estimate).toMatchObject({ availablePercent: 62, walkingMinutes: 8, isExample: false });
     expect(first.reason).toBe('Why gilman-ps');
     // Known IDs reuse the website's verified pin
     expect(Number.isFinite(first.lot.latitude)).toBe(true);
     expect(backup.badgeLabel).toBe('Backup');
     // Unknown stays unknown: null, never 0
-    expect(backup.estimate).toEqual({ availablePercent: null, walkingMinutes: null, isExample: false });
+    expect(backup.estimate).toMatchObject({ availablePercent: null, walkingMinutes: null, isExample: false });
   });
 
   it('keeps a ready result without a backup', async () => {
@@ -115,9 +128,10 @@ describe('fetchRecommendations', () => {
   });
 
   it.each([
-    [404, {}, 'returned 404'],
+    [404, {}, 'not available right now'],
     [422, { detail: [{ msg: 'Arrival time does not exist in UCSD local time' }] }, 'does not exist in UCSD'],
-    [500, {}, 'HTTP 500'],
+    [500, {}, 'error 500'],
+    [503, {}, 'error 503'],
     [200, 'not json', 'could not read'],
     [200, { status: 'ready' }, 'agreed format'],
     [200, ready({ first_choice: choice('x', 1.4, 3) }), 'agreed format'],
@@ -129,15 +143,49 @@ describe('fetchRecommendations', () => {
   });
 
   it('explains network failures without falling back to sample data', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fetchImpl = vi.fn(async () => {
       throw new TypeError('Failed to fetch');
     });
     const outcome = await fetchRecommendations(REQUEST, { fetchImpl, baseUrl: 'http://api.test' });
     expect(outcome).toEqual({
       kind: 'error',
-      message:
-        'Could not reach the ParkSmart backend at http://api.test. Check that it is running and allows requests from this site (CORS).',
+      message: "Couldn't reach ParkSmart right now. Check your connection and try again.",
     });
+    // Visitors get plain wording; the URL and CORS hint go to the console for developers
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('http://api.test'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('CORS'));
+    warn.mockRestore();
+  });
+
+  it('gives up after the timeout instead of loading forever', async () => {
+    vi.useFakeTimers();
+    // A backend that never answers, but stops when its request is aborted
+    const fetchImpl = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        })
+    );
+    const pending = fetchRecommendations(REQUEST, { fetchImpl: fetchImpl as typeof fetch, timeoutMs: 5000 });
+    await vi.advanceTimersByTimeAsync(5000);
+    const outcome = await pending;
+    vi.useRealTimers();
+    expect(outcome.kind).toBe('error');
+    if (outcome.kind === 'error') expect(outcome.message).toContain('taking too long');
+  });
+
+  it('still lets a newer search cancel a request that has a timeout', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        })
+    );
+    const pending = fetchRecommendations(REQUEST, { fetchImpl: fetchImpl as typeof fetch, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow('Aborted');
   });
 
   it('lets aborts from a newer search propagate', async () => {
@@ -162,5 +210,40 @@ describe('resolveRecommendationSource', () => {
     expect(resolveRecommendationSource(' API ')).toBe('api');
     expect(resolveRecommendationSource(undefined)).toBe('sample');
     expect(resolveRecommendationSource('anything')).toBe('sample');
+  });
+});
+
+describe('ranked options', () => {
+  it('keys every ranked option by location with its rank label and fit reason', () => {
+    const ranked = (id: string, rank: number) => ({
+      ...choice(id, 0.5, 6),
+      rank,
+      fit_reason: `Fits ${id}`,
+      walking_time_source: 'routed' as const,
+    });
+    const response = ready({ options: [ranked('gilman-ps', 1), ranked('p406', 2), ranked('p402', 3)] });
+    expect(parseResponse(response)).not.toBeNull();
+    const options = toRankedOptions(response);
+    expect(Object.keys(options)).toEqual(['gilman-ps', 'p406', 'p402']);
+    expect(options['p402'].badgeLabel).toBe('#3');
+    expect(options['p402'].estimate).toMatchObject({
+      availablePercent: 50,
+      walkingMinutes: 6,
+      fitReason: 'Fits p402',
+      walkingSource: 'routed',
+      rank: 3,
+    });
+  });
+
+  it('falls back to the two picks for an older backend without options', () => {
+    const options = toRankedOptions(ready());
+    expect(Object.keys(options)).toEqual(['gilman-ps', 'p406']);
+    expect(options['p406'].badgeLabel).toBe('Backup');
+    expect(options['gilman-ps'].estimate.fitReason).toBeNull();
+  });
+
+  it('rejects malformed options', () => {
+    expect(parseResponse({ ...ready(), options: 'nope' })).toBeNull();
+    expect(parseResponse({ ...ready(), options: [{ location: null }] })).toBeNull();
   });
 });

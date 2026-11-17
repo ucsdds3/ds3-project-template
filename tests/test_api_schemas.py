@@ -13,6 +13,8 @@ from src.api.schemas import (
     ParkingChoice,
     RecommendationRequest,
     RecommendationResponse,
+    RouteRequest,
+    RouteResponse,
 )
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "docs/examples/backend"
@@ -144,6 +146,29 @@ def test_inconsistent_response(changes):
         RecommendationResponse.model_validate(payload)
 
 
+def _example_payload():
+    payload = json.loads((EXAMPLES / "recommendation_example.json").read_text())
+    assert len(payload["options"]) >= 2  # the checks below need a first + backup
+    return payload
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p["options"].reverse(),  # best option must come first
+    lambda p: p["options"].__setitem__(1, p["options"][0]),  # repeated location
+    lambda p: p["options"].pop(0),  # first choice missing from the list
+    lambda p: p["options"][1].update(rank=5),  # ranks must run 1, 2, 3, ...
+])
+def test_misordered_options_rejected(mutate):
+    payload = _example_payload()
+    mutate(payload)
+    with pytest.raises(ValidationError):
+        RecommendationResponse.model_validate(payload)
+
+
+def test_options_with_matching_picks_and_ranks_are_accepted():
+    RecommendationResponse.model_validate(_example_payload())
+
+
 def test_duplicate_backup_rejected():
     payload = json.loads((EXAMPLES / "recommendation_example.json").read_text())
     payload["backup_choice"] = payload["first_choice"]
@@ -178,3 +203,35 @@ def test_invalid_request_fields(changes):
 def test_missing_required_request_fields():
     with pytest.raises(ValidationError):
         RecommendationRequest.model_validate({})
+
+
+def test_route_examples():
+    """Shared /routes examples for the website and mobile app stay valid."""
+    request = RouteRequest.model_validate_json(
+        (EXAMPLES / "route_request.json").read_text())
+    response = RouteResponse.model_validate_json(
+        (EXAMPLES / "route_response.json").read_text())
+    assert response.mode == request.mode
+    assert response.traffic_aware is False
+    # GeoJSON order: the path starts near the request origin as [longitude, latitude]
+    start_lon, start_lat = response.geometry[0]
+    assert abs(start_lon - request.origin.longitude) < 0.001
+    assert abs(start_lat - request.origin.latitude) < 0.001
+
+
+@pytest.mark.parametrize("changes", [
+    {"mode": "transit"},
+    {"origin": {"latitude": 32.88}},
+    {"extra": True},
+])
+def test_route_request_rejects_bad_input(changes):
+    payload = json.loads((EXAMPLES / "route_request.json").read_text())
+    payload.update(changes)
+    with pytest.raises(ValidationError):
+        RouteRequest.model_validate(payload)
+
+
+def test_route_response_never_claims_traffic():
+    payload = json.loads((EXAMPLES / "route_response.json").read_text())
+    with pytest.raises(ValidationError):
+        RouteResponse.model_validate({**payload, "traffic_aware": True})

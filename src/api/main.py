@@ -1,18 +1,33 @@
 """Local HTTP orchestration; predictions and ranking stay in reusable modules."""
 
 import logging
+import os
+import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.location_registry import DEFAULT_DATASET, DEFAULT_REGISTRY, load_registry
 from src.parking_benchmarks import load_analysis_dataset
 from src.recommender import Recommender
+from src.trip_alerts.contracts import AlertTarget
+from src.trip_alerts.service import (
+    COMMON_LIMITATIONS, TripAlertService, unavailable_source,
+)
+from src.routing import (
+    PROVIDER_LABELS, METERS_PER_MILE, ROUTE_REQUEST_BUDGET_SECONDS,
+    ROUTES_ENDPOINT_MIN_INTERVAL_SECONDS, NoRouteFound, Point, RequestThrottle,
+    RouteService, RoutingError, provider_from_env, route_minutes, walk_router,
+)
 
 from .locations import get_locations
+from .alert_schemas import TripAlertsRequest, TripAlertsResponse
 from .schemas import (
     HealthResponse, LocationsResponse, RecommendationRequest, RecommendationResponse,
+    ReadinessResponse, RouteRequest, RouteResponse,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -21,15 +36,97 @@ LOCAL_FRONTEND_ORIGINS = [
     for host in ("localhost", "127.0.0.1")
     for port in (3000, 5173)
 ]
+#: Extra browser origins (comma-separated, exact scheme://host[:port]) allowed to call
+#: the API, e.g. the deployed Amplify site. Wildcards are not accepted.
+CORS_ORIGINS_ENV = "PARKSMART_CORS_ORIGINS"
 DATA_UNAVAILABLE = (
     "Historical estimates are unavailable. Check the server startup logs and "
     "the processed dataset or estimator, then restart the backend. "
     "This does not mean parking is full."
 )
+ROUTING_OFF = ("Routes are not available on this server. Recommendations still "
+               "work; see the server log and docs/routing.md to enable them.")
+ROUTE_FAILED = ("The routing service could not provide this route right now. "
+                "Try again shortly.")
+ROUTE_ATTRIBUTION = "Route data \u00a9 OpenStreetMap contributors"
+ROUTE_LIMITATIONS = {
+    "driving": [
+        "Typical driving time without live traffic.",
+        "Ends at the parking location's map point, which may not be its "
+        "vehicle entrance.",
+    ],
+    "walking": [
+        "Walking path from map data; check signs for closures and construction.",
+        "Starts at the parking location's map point, which may not be its "
+        "pedestrian exit.",
+    ],
+}
+
+
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _browser_origin(origin: str, raw: str) -> str:
+    """Return ``origin`` exactly as a browser sends it in the Origin header.
+
+    Browsers send a lowercase scheme and host and leave out default ports, and
+    CORS matching is exact, so entries are normalized to that form.
+
+    Raises:
+        ValueError: a wildcard, path, query, credentials, a bad port or an
+            invalid or non-ASCII host, which could never match.
+    """
+    parts = urlsplit(origin)
+    try:
+        port = parts.port
+    except ValueError as error:
+        raise ValueError(
+            f"{CORS_ORIGINS_ENV} entry has an invalid port: {raw!r}") from error
+    scheme = parts.scheme.lower()
+    if ("*" in origin or scheme not in DEFAULT_PORTS or not parts.hostname
+            or parts.path or parts.query or parts.fragment
+            or parts.username or parts.password):
+        raise ValueError(
+            f"{CORS_ORIGINS_ENV} entries must be exact http(s) origins "
+            f"(scheme://host[:port], no path): {raw!r}")
+    host = parts.hostname.lower()
+    if not host.isascii() or ".." in host or host.startswith("."):
+        # Browsers send internationalized hosts as punycode (xn--...); Python's
+        # converter differs from browsers for some names, so ask for that form
+        raise ValueError(
+            f"{CORS_ORIGINS_ENV} entry has an invalid or non-ASCII host; use the "
+            f"punycode (xn--) form: {raw!r}")
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    keep_port = port is not None and port != DEFAULT_PORTS[scheme]
+    return f"{scheme}://{host}" + (f":{port}" if keep_port else "")
+
+
+def allowed_origins(environ=None) -> list:
+    """Return local development origins plus any from PARKSMART_CORS_ORIGINS.
+
+    Args:
+        environ: mapping to read (defaults to os.environ).
+    Returns:
+        Origins without trailing slashes, local ones first, no duplicates.
+    Raises:
+        ValueError: an entry is not an exact http(s) origin (see
+            _browser_origin: wildcard, path, query, credentials, bad port, or
+            invalid or non-ASCII host).
+    """
+    env = os.environ if environ is None else environ
+    extra = []
+    for raw in env.get(CORS_ORIGINS_ENV, "").split(","):
+        origin = raw.strip().rstrip("/")
+        if not origin:
+            continue
+        extra.append(_browser_origin(origin, raw))
+    return list(dict.fromkeys([*LOCAL_FRONTEND_ORIGINS, *extra]))
 
 
 def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
-               estimator=None) -> FastAPI:
+               estimator=None, route_service=None, estimator_loader=None,
+               prediction_mode=None, trip_alert_service=None) -> FastAPI:
     """Create an API loading its catalog and prediction resources at startup.
 
     Args:
@@ -37,15 +134,51 @@ def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
         registry_path: validated shared registry JSON.
         estimator: optional ready AvailabilityEstimator wrapping a loaded model.
             None uses the historical-average baseline, fitted once at startup.
+        route_service: optional RouteService. None builds one from environment
+            variables (src.routing.provider_from_env) at startup.
+        estimator_loader: optional zero-argument loader called once at startup;
+            failures leave recommendations unavailable, never fit a fallback.
+        prediction_mode: readiness label; inferred as provided or baseline when
+            omitted. Saved entrypoints explicitly use saved.
+        trip_alert_service: optional ready TripAlertService for injection. Default
+            creates optional source clients once; no source is called at startup.
     Returns:
         FastAPI app. Missing/invalid resources produce HTTP 503 while health
         remains available. Each process loads once; restart to reload resources.
     """
+    if estimator is not None and estimator_loader is not None:
+        raise ValueError("Provide an estimator or its loader, not both")
+    mode = prediction_mode or (
+        "provided" if estimator is not None or estimator_loader else "baseline")
+    if mode not in {"baseline", "saved", "provided"}:
+        raise ValueError("Invalid prediction_mode")
+
     @asynccontextmanager
     async def lifespan(application):
         """Load shared resources for this app, then release them on shutdown."""
         application.state.catalog = None
         application.state.recommender = None
+        application.state.trip_alerts = None
+        try:
+            enabled = os.environ.get("PARKSMART_TRIP_ALERTS_ENABLED", "true").lower()
+            if enabled not in {"true", "false", "1", "0"}:
+                raise ValueError("PARKSMART_TRIP_ALERTS_ENABLED must be true or false")
+            application.state.trip_alerts = trip_alert_service or TripAlertService(
+                enabled=enabled in {"true", "1"})
+        except Exception:
+            # Optional alert-client initialization must not take down parking.
+            LOGGER.exception("Trip alerts unavailable during initialization")
+        # Caps POST /routes' share of provider calls (see routing constants)
+        application.state.routes_gate = RequestThrottle(
+            ROUTES_ENDPOINT_MIN_INTERVAL_SECONDS)
+        if route_service is not None:
+            application.state.routes = route_service
+        else:
+            try:
+                application.state.routes = RouteService(provider_from_env())
+            except ValueError as error:
+                LOGGER.warning("Routing disabled: %s", error)
+                application.state.routes = RouteService(None)
         try:
             registry = load_registry(registry_path)
             application.state.catalog = get_locations(registry)
@@ -53,9 +186,13 @@ def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
             LOGGER.warning("Location registry unavailable: %s", error)
         else:
             try:
+                ready_estimator = (estimator_loader() if estimator_loader
+                                   else estimator)
+                if estimator_loader is not None and ready_estimator is None:
+                    raise ValueError("Estimator loader returned no estimator")
                 records = load_analysis_dataset(dataset_path)
                 application.state.recommender = Recommender(
-                    records, registry, estimator=estimator,
+                    records, registry, estimator=ready_estimator,
                 )
             except (OSError, ValueError, KeyError) as error:
                 LOGGER.warning("Historical recommendation resources unavailable: %s",
@@ -65,14 +202,18 @@ def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
         finally:
             application.state.recommender = None
             application.state.catalog = None
+            application.state.routes = None
+            if application.state.trip_alerts is not None:
+                application.state.trip_alerts.close()
+                application.state.trip_alerts = None
 
     application = FastAPI(
-        title="ParkSmart Local API", version="0.2.0", lifespan=lifespan,
+        title="ParkSmart Local API", version="0.3.0", lifespan=lifespan,
         description="Shared real locations and historical parking recommendations. "
         "Estimates are not live availability or a guaranteed space.",
     )
     application.add_middleware(
-        CORSMiddleware, allow_origins=LOCAL_FRONTEND_ORIGINS,
+        CORSMiddleware, allow_origins=allowed_origins(),
         allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
     )
 
@@ -80,6 +221,20 @@ def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
     def health() -> HealthResponse:
         """Return process liveness, independently of prediction readiness."""
         return HealthResponse()
+
+    @application.get("/readiness", response_model=ReadinessResponse,
+                     tags=["Health"])
+    def readiness():
+        """Return HTTP 200 when resources are ready, otherwise an explicit 503."""
+        catalog_ready = application.state.catalog is not None
+        predictions_ready = application.state.recommender is not None
+        result = ReadinessResponse(
+            status="ready" if catalog_ready and predictions_ready else "unavailable",
+            catalog_ready=catalog_ready, predictions_ready=predictions_ready,
+            prediction_mode=mode,
+        )
+        return JSONResponse(result.model_dump(), status_code=(
+            200 if result.status == "ready" else 503))
 
     @application.get("/locations", response_model=LocationsResponse,
                      tags=["Locations"])
@@ -103,6 +258,9 @@ def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
             result = recommender.recommend(
                 request.permit_type, request.arrival_time,
                 destination=coordinates.model_dump() if coordinates else None,
+                walk_router=walk_router(application.state.routes),
+                preference=request.preference,
+                max_walk_minutes=request.max_walk_minutes,
             )
         except ValueError as error:
             # Request syntax, permit and time errors are validated by Pydantic.
@@ -113,10 +271,104 @@ def create_app(dataset_path=DEFAULT_DATASET, registry_path=DEFAULT_REGISTRY,
         if request.starting_location is not None:
             payload["limitations"] = [
                 *payload["limitations"],
-                "Starting location is not used yet; no driving route is calculated.",
+                "Starting location is not used for ranking yet; driving routes "
+                "come from POST /routes.",
             ]
         return RecommendationResponse(
             **payload, is_example=False, arrival_time=request.arrival_time,
+        )
+
+    @application.post("/trip-alerts", response_model=TripAlertsResponse,
+                      tags=["Trip alerts"])
+    def trip_alerts(request: TripAlertsRequest) -> TripAlertsResponse:
+        """Return optional trip context without consulting or changing predictions.
+
+        Source failures are HTTP 200 with per-source unavailable/stale states.
+        Unknown parking IDs are 404; an unavailable parking catalog is 503.
+        A destination-only request does not require prediction/catalog readiness.
+        """
+        targets, limitations = [], list(COMMON_LIMITATIONS)
+        if request.parking_location_id is not None:
+            catalog = application.state.catalog
+            if catalog is None:
+                raise HTTPException(503, "Parking location catalog is unavailable.")
+            location = next((item for item in catalog.locations
+                             if item.location_id == request.parking_location_id), None)
+            if location is None:
+                raise HTTPException(404, "Unknown or unsupported parking location ID.")
+            if location.coordinates is not None:
+                targets.append(AlertTarget(
+                    "parking", location.name, location.coordinates.latitude,
+                    location.coordinates.longitude, location.location_id,
+                ))
+            else:
+                limitations.append(
+                    "Selected parking location has no verified coordinates; "
+                    "its proximity to construction could not be checked.")
+        if request.destination is not None:
+            destination = request.destination
+            if destination.coordinates is not None:
+                targets.append(AlertTarget(
+                    "destination", destination.name, destination.coordinates.latitude,
+                    destination.coordinates.longitude,
+                ))
+            else:
+                limitations.append(
+                    "Destination has no coordinates; its name was not geocoded.")
+        service = application.state.trip_alerts
+        if service is None:
+            from dataclasses import asdict
+            results = {name: asdict(unavailable_source(
+                name, "Trip alert services are unavailable on this server."))
+                for name in ("weather", "construction")}
+        else:
+            results = service.get(request.arrival_time, targets)
+        return TripAlertsResponse(
+            **results, arrival_time=request.arrival_time,
+            is_example=False, limitations=limitations,
+        )
+
+    @application.post("/routes", response_model=RouteResponse, tags=["Routes"])
+    def routes(request: RouteRequest) -> RouteResponse:
+        """Return one driving or walking route, or explain why there is none.
+
+        400: trip too long for the mode. 404: provider found no route, or a
+        point is too far from any mapped road or path. 502: provider failed.
+        503: routing is not configured, or was turned off (for example a
+        Python without TLS 1.3; see the server log).
+        """
+        service = application.state.routes
+        if service is None or not service.enabled:
+            raise HTTPException(503, ROUTING_OFF)
+        origin = Point(request.origin.latitude, request.origin.longitude)
+        destination = Point(request.destination.latitude, request.destination.longitude)
+        try:
+            # Throttle wait plus provider call stay inside the website's route timeout
+            deadline = time.monotonic() + ROUTE_REQUEST_BUDGET_SECONDS
+            route = service.route(request.mode, origin, destination,
+                                  deadline=deadline,
+                                  gate=(application.state.routes_gate
+                                        if service.rate_limited_for(request.mode)
+                                        else None))
+        except RuntimeError as error:
+            # Routing was turned off after a confirmed unsupported-TLS failure
+            raise HTTPException(503, ROUTING_OFF) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except NoRouteFound as error:
+            raise HTTPException(404, str(error)) from error
+        except RoutingError as error:
+            LOGGER.warning("Route provider failed: %s", error)
+            raise HTTPException(502, ROUTE_FAILED) from error
+        return RouteResponse(
+            mode=route.mode,
+            distance_meters=round(route.distance_meters, 1),
+            distance_miles=round(route.distance_meters / METERS_PER_MILE, 2),
+            duration_minutes=route_minutes(route),
+            geometry=route.geometry,
+            provider=PROVIDER_LABELS.get(route.provider, route.provider),
+            attribution=ROUTE_ATTRIBUTION,
+            limitations=ROUTE_LIMITATIONS[route.mode],
         )
 
     return application

@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 *.egg-info/
 .venv/
+.venv312/
 venv/
 
 # Jupyter
@@ -58,3 +59,14 @@ mobile/ios/**/*.xcuserstate
 mobile/ios/**/xcuserdata/
 mobile/ios/**/*.xcresult/
 mobile/ios/Config.local.xcconfig
+# Private prepared serving bundles and local AWS SAM build output.
+/.serving-bundle/
+/.aws-sam/
+/infra/.aws-sam/
+/infra/samconfig.toml
+
+# Local serving-image dependency staging; never commit generated build inputs.
+/.lambda-build/
+
+# Local manual Amplify upload packages.
+/frontend/parksmart-site*.zip

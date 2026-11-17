@@ -43,8 +43,6 @@ interface ResultsListProps {
   onRestoreSearch: (request: ParkingPlannerRequest) => void;
   /** Show the "enter your trip details" prompt instead of results. */
   showIntroPrompt: boolean;
-  /** "Your usual" card, shown in place of the generic prompt when a trip is saved. */
-  usualTripCard?: React.ReactNode;
   /** True when trip details changed since the search; results are greyed out. */
   isStale: boolean;
   /** Time every availability number describes (follows the arrival time unless the Time tool is used). */
@@ -59,6 +57,8 @@ interface ResultsListProps {
   errorMessage?: string | null;
   /** Source and backend messages for the current results; null for the dev simulator. */
   resultInfo?: ResultInfo | null;
+  /** Driving/walking directions for the selected result (API mode), shown under the cards. */
+  directions?: React.ReactNode;
 }
 
 /**
@@ -73,7 +73,6 @@ export const ResultsList: React.FC<ResultsListProps> = ({
   searchHistory,
   onRestoreSearch,
   showIntroPrompt,
-  usualTripCard,
   isStale,
   availabilityTime,
   confirmedLotId,
@@ -84,6 +83,7 @@ export const ResultsList: React.FC<ResultsListProps> = ({
   onResetFilters,
   errorMessage = null,
   resultInfo = null,
+  directions = null,
 }) => {
   const api = resultInfo?.source === 'api' ? resultInfo : null;
   // Show the top 3, then reveal 5 more per "Show more" click; reset on every new search
@@ -93,10 +93,6 @@ export const ResultsList: React.FC<ResultsListProps> = ({
     setVisibleCount(INITIAL_VISIBLE);
     previousVisibleRef.current = INITIAL_VISIBLE;
   }, [recommendations]);
-
-  if (showIntroPrompt && !isLoading && usualTripCard) {
-    return <div className="pt-2">{usualTripCard}</div>;
-  }
 
   if (showIntroPrompt && !isLoading) {
     return (
@@ -144,7 +140,9 @@ export const ResultsList: React.FC<ResultsListProps> = ({
           <h4 className="text-sm font-bold text-navy">{EMPTY_TITLES[api.status]}</h4>
           <p className="text-xs text-muted max-w-xs mx-auto leading-relaxed">{api.explanation}</p>
           <p className="text-xs text-muted max-w-xs mx-auto leading-relaxed">
-            Try a different time, destination or permit.
+            {searchedRequest?.maxWalkMinutes != null
+              ? 'Try a longer max walk, a different time, destination or permit.'
+              : 'Try a different time, destination or permit.'}
           </p>
         </div>
         <Limitations notes={api.limitations} />
@@ -220,6 +218,8 @@ export const ResultsList: React.FC<ResultsListProps> = ({
           );
         })}
       </div>
+
+      {!isStale && directions}
 
       {api ? (
         <Limitations notes={api.limitations} />

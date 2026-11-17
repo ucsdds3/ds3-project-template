@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { Clock, MapPin, MapPinOff } from 'lucide-react';
 import * as maplibregl from 'maplibre-gl';
+import { ROUTE_COLORS } from './DirectionsPanel.tsx';
 // MapLibre draws tiles in a background Web Worker. Vite bundles the main library
 // but does not copy the worker file, so the default worker URL 404s and the map
 // renders blank. `?url` makes Vite emit the worker as an asset and give us its URL.
@@ -142,6 +143,53 @@ interface MapContainerProps {
    * results come from the backend, so the map never shows sample numbers beside them.
    */
   showSampleAvailability?: boolean;
+  /** Route lines for the selected result, as [longitude, latitude] pairs (API mode). */
+  routeLines?: { driving: number[][] | null; walking: number[][] | null };
+  /** Where driving directions start, marked on the map while routes show. */
+  startPoint?: { latitude: number; longitude: number } | null;
+}
+
+const ROUTE_MODES = ['driving', 'walking'] as const;
+
+/** GeoJSON for one route line; an empty collection hides it. */
+function routeData(coordinates: number[][] | null | undefined): maplibregl.GeoJSONSourceSpecification["data"] {
+  return {
+    type: 'FeatureCollection',
+    features: coordinates
+      ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } }]
+      : [],
+  };
+}
+
+/**
+ * Adds or refreshes the route sources and line layers. Runs after every style load,
+ * because switching Map/Satellite (setStyle) drops custom layers.
+ */
+function drawRouteLines(map: maplibregl.Map, lines: MapContainerProps['routeLines']) {
+  for (const mode of ROUTE_MODES) {
+    const id = `ps-route-${mode}`;
+    const data = routeData(lines?.[mode]);
+    const source = map.getSource(id) as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(data);
+      continue;
+    }
+    map.addSource(id, { type: 'geojson', data });
+    const layout = { 'line-join': 'round', 'line-cap': 'round' } as const;
+    // White casing keeps the navy driving line readable on satellite imagery
+    map.addLayer({ id: `${id}-casing`, type: 'line', source: id, layout, paint: { 'line-color': '#FFFFFF', 'line-width': 8, 'line-opacity': 0.85 } });
+    map.addLayer({
+      id,
+      type: 'line',
+      source: id,
+      layout,
+      paint: {
+        'line-color': ROUTE_COLORS[mode],
+        'line-width': 4.5,
+        ...(mode === 'walking' ? { 'line-dasharray': [1, 1.5] } : {}),
+      },
+    });
+  }
 }
 
 /**
@@ -165,7 +213,11 @@ export const MapContainer: React.FC<MapContainerProps> = ({
   rankedLotIds,
   availabilityTime,
   showSampleAvailability = true,
+  routeLines,
+  startPoint = null,
 }) => {
+  const routeLinesRef = useRef(routeLines);
+  routeLinesRef.current = routeLines;
   const availabilityTimeRef = useRef(availabilityTime);
   availabilityTimeRef.current = availabilityTime;
   const showSampleAvailabilityRef = useRef(showSampleAvailability);
@@ -214,7 +266,8 @@ export const MapContainer: React.FC<MapContainerProps> = ({
         ...MAP_PADDING,
         // While the lot card is open, treat the strip it covers as hidden too
         bottom: isDetailOpen ? DETAIL_CARD_INSET_PX : MAP_PADDING.bottom,
-        left: isPanelOpen ? Math.min(MAP_PADDING.left, viewportWidth / 2) : MAP_PADDING.right,
+        // Fixed, so opening/closing the panel (which overlays the map) never moves the camera
+        left: Math.min(MAP_PADDING.left, viewportWidth / 2),
       };
   const paddingRef = useRef(padding);
   paddingRef.current = padding;
@@ -362,6 +415,9 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     map.once('idle', () => setIsMapReady(true));
     const readyTimer = window.setTimeout(() => setIsMapReady(true), 6000);
 
+    // Route layers live in the style, so redraw them whenever a style finishes loading
+    map.on('style.load', () => drawRouteLines(map, routeLinesRef.current));
+
     // On initial map style load, fit bounds to all lots plus the destination
     map.on('load', () => {
       isLoadedRef.current = true;
@@ -489,7 +545,7 @@ export const MapContainer: React.FC<MapContainerProps> = ({
         el.setAttribute(
           'aria-label',
           showSampleAvailabilityRef.current
-            ? `Parking Lot ${lot.name}, ${lot.estimatedAvailabilityPercent}% estimated capacity (sample)`
+            ? `Parking Lot ${lot.name}, ${lot.estimatedAvailabilityPercent}% of spaces open in past surveys (sample)`
             : `Parking Lot ${lot.name}`
         );
 
@@ -616,6 +672,39 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     return () => window.clearTimeout(timer);
   }, [pinMessage]);
 
+  // Route lines follow the selected result
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoadedRef.current) return;
+    // isStyleLoaded() is false while tiles are still loading; draw once the map is
+    // idle instead of dropping the route (the ref always holds the latest lines)
+    const draw = () => drawRouteLines(map, routeLinesRef.current);
+    if (map.isStyleLoaded()) {
+      draw();
+      return;
+    }
+    map.once('idle', draw);
+    return () => {
+      map.off('idle', draw);
+    };
+  }, [routeLines?.driving, routeLines?.walking]);
+
+  // Starting point marker for driving directions
+  const startMarkerRef = useRef<maplibregl.Marker | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    startMarkerRef.current?.remove();
+    startMarkerRef.current = null;
+    if (!map || !startPoint) return;
+    const el = document.createElement('div');
+    el.className = 'ps-start-marker';
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', 'Your starting point');
+    startMarkerRef.current = new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([startPoint.longitude, startPoint.latitude])
+      .addTo(map);
+  }, [startPoint?.latitude, startPoint?.longitude]);
+
   // Swap basemap when the toggle changes. DOM markers are unaffected by setStyle.
   useEffect(() => {
     const map = mapRef.current;
@@ -648,10 +737,12 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     });
   }, [selectedLocationId, lots]);
 
-  // Opening/closing the panel only shifts the map's visual center; zoom stays put.
+  // Phone only: opening/closing the bottom sheet shifts the map's visual center; zoom stays put.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isLoadedRef.current) return;
+    // Desktop: the panel overlays the map, so there is nothing to shift. Only the phone's
+    // bottom sheet changes the padding.
+    if (!map || !isLoadedRef.current || window.innerWidth >= 640) return;
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     map.easeTo({ padding: paddingRef.current, duration: prefersReducedMotion ? 0 : 300 });
   }, [isPanelOpen]);
@@ -678,12 +769,33 @@ export const MapContainer: React.FC<MapContainerProps> = ({
       </div>
 
       {/* Map controls, mounted inside the map's top-right control row (left of zoom):
-          row 1 is Time + Map/Satellite, row 2 is Drop pin right under Map/Satellite.
+          one row: Drop pin, Time, Map/Satellite.
           Every button is 34px tall so the rows line up. */}
       {basemapControlEl &&
         createPortal(
-          <div className="relative flex flex-col items-end gap-2">
+          <div className="relative flex items-start justify-end">
             <div className="flex items-start gap-2">
+              <button
+                type="button"
+                aria-pressed={isPinMode || hasDroppedPin}
+                onClick={() => {
+                  if (hasDroppedPin) {
+                    onClearPin();
+                    setIsPinMode(false);
+                  } else {
+                    setIsPinMode((on) => !on);
+                  }
+                }}
+                className={CONTROL_BUTTON}
+                data-tone="sun"
+              >
+                {hasDroppedPin ? (
+                  <MapPinOff className="w-4 h-4" aria-hidden="true" />
+                ) : (
+                  <MapPin className="w-4 h-4" aria-hidden="true" />
+                )}
+                {hasDroppedPin ? 'Remove pin' : isPinMode ? 'Tap the map' : 'Drop pin'}
+              </button>
               {showSampleAvailability && (
                 <button
                   type="button"
@@ -725,28 +837,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
                 ))}
               </div>
             </div>
-
-            <button
-              type="button"
-              aria-pressed={isPinMode || hasDroppedPin}
-              onClick={() => {
-                if (hasDroppedPin) {
-                  onClearPin();
-                  setIsPinMode(false);
-                } else {
-                  setIsPinMode((on) => !on);
-                }
-              }}
-              className={CONTROL_BUTTON}
-              data-tone="sun"
-            >
-              {hasDroppedPin ? (
-                <MapPinOff className="w-4 h-4" aria-hidden="true" />
-              ) : (
-                <MapPin className="w-4 h-4" aria-hidden="true" />
-              )}
-              {hasDroppedPin ? 'Remove pin' : isPinMode ? 'Tap the map' : 'Drop pin'}
-            </button>
 
             {pinMessage && (
               <p
