@@ -5,7 +5,7 @@ struct PlannerView: View {
     @StateObject private var model = PlannerModel()
     @State private var showConnection = false
     @FocusState private var inputFocused: Bool
-    
+
     private enum InputField: Hashable {
         case destination
         case permit

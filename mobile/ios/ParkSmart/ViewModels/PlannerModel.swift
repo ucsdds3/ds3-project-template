@@ -51,6 +51,9 @@ final class PlannerModel: ObservableObject {
         self.serviceOverride = serviceOverride
     }
 
+    // Capture the active request before a replacement can change it.
+    var currentWork: Task<Void, Never>? { work }
+
     // Allows tests to await completion without timing-based sleeps.
     func waitForCurrentWork() async {
         await work?.value

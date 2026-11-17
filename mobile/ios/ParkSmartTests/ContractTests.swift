@@ -187,8 +187,7 @@ extension ContractTests {
 
         await fulfillment(of: [started], timeout: 3)
         // Capture the old task before starting the replacement.
-        let oldFinished = Task { await model.waitForCurrentWork() }
-        await Task.yield()
+        let oldFinished = try XCTUnwrap(model.currentWork)
 
         model.permit = "new"
         model.plan()
