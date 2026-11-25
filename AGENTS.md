@@ -1,0 +1,958 @@
+<!-- ============================================================
+     👋 HUMAN-READ SECTION — read this yourself first. Delete this
+     whole block (down to the divider) once you're done, or leave
+     it — agents will just skip past an HTML comment either way.
+     ============================================================ -->
+
+# For DS3 Students: What Is AGENTS.md and Why Does This Repo Have One?
+
+## The problem it solves
+
+Every AI coding tool invented its own file for "here's context about my
+project, please read this first": Cursor uses `.cursorrules`, Claude Code
+uses `CLAUDE.md`, GitHub Copilot uses `.github/copilot-instructions.md`,
+and so on. If you used more than one tool, you had to write the same
+instructions multiple times in multiple formats.
+
+**`AGENTS.md`** is the fix: a single, open, cross-tool standard — think of
+it as **a README, but written for an AI agent instead of a human**. It was
+put together by the teams behind OpenAI Codex, Cursor, Google, and others
+specifically so you write your project instructions *once* and every
+major coding agent (Claude Code, Cursor, Codex, Copilot, and more) reads
+the same file. As of writing, tens of thousands of repos use it and
+~20+ tools support it natively.
+
+## What it's for
+
+When an agent opens your repo, it has no idea:
+- what the project actually does or who it's for
+- how to install dependencies and run things
+- where "real" code lives vs. scratch/exploration code
+- how your team runs tests
+- what conventions you follow (style, structure, docstrings...)
+- what it should *never* do (touch `main` directly, commit secrets, etc.)
+
+`AGENTS.md` answers all of that up front, once, so you don't have to
+re-explain your project in every single chat with every tool. The agent
+auto-discovers it just by being in the repo — you don't have to `@`
+mention it (though you still can, to be explicit).
+
+## Why DS3 wants you comfortable with this
+
+- **It's now industry standard.** Understanding how to write good agent
+  instructions — clear, specific, scoped, not overly long — is a real
+  skill you'll use at any internship or job that touches AI tooling.
+- **It's portable.** Whatever tool you or a future teammate prefers
+  (Claude Code, Cursor, Codex, Copilot...), the same file works. You're
+  not locked into one assistant.
+- **It documents your project for humans too.** A well-written AGENTS.md
+  is often just as useful for a new teammate joining the project as it is
+  for an AI agent.
+- **It's the difference between "the agent guesses" and "the agent
+  knows."** Vague instructions produce vague/wrong help. Specific ones —
+  "run `pytest` from the repo root," not "run tests" — get you working
+  code the first time.
+
+## Keep it alive — this is not a one-time setup step
+
+A stale AGENTS.md is worse than none at all: it actively lies to the next
+person (or agent) who trusts it. Every teammate on this project — and
+every agent they work with — reads the *same* file, so it has to stay
+accurate as the project actually changes.
+
+**The rule: any time an agent (or you) adds a feature, changes how
+something is run/tested, changes the structure, or adds a new
+dependency/convention, AGENTS.md gets updated in the same PR.** Not
+"eventually," not "someone else's job" — the same change that made the
+file outdated is responsible for fixing it. See the instruction to this
+effect in the template below; don't delete it.
+
+## AGENTS.md vs. the `ds3-code-review` skill
+
+These are two different things and both matter:
+- **`AGENTS.md`** = standing context about *this whole project* (what it
+  is, how to run it, conventions). The agent reads it automatically for
+  *any* task in this repo.
+- **`SKILL.md` files** (like `ds3-code-review`) = instructions for one
+  *specific task* — in this case, running a strict read-only code review.
+  You (or the agent) reach for it only when that specific job comes up.
+
+A good mental model: AGENTS.md is "everything you need to know to work in
+this repo," a skill is "here's exactly how to do this one thing well."
+
+## How to fill this out (do this now)
+
+This file is a **template**. Go through every `[bracketed placeholder]`
+below and replace it with real info about your specific project — nobody
+else can fill this in for you, since every DS3 project is different. Keep
+the sections short and factual; don't write paragraphs the agent doesn't
+need. If a command doesn't work, the agent will trust it and waste time —
+so actually run each command yourself before writing it down.
+
+Where this file goes: **the repo root**, named exactly `AGENTS.md`. If
+your project ever splits into clearly separate sub-projects (e.g. a
+`frontend/` and a `models/` pipeline that are basically unrelated), you
+can also drop an additional `AGENTS.md` inside a subfolder — the agent
+uses the one closest to the file it's working on.
+
+Nothing tool-specific to install — Claude Code, Cursor, and Codex all
+read `AGENTS.md` at the repo root automatically, no setup needed. (Claude
+Code will also read a `CLAUDE.md` if present, and Cursor also honors
+`.cursor/rules/` — but for a shared team repo, put the real content here
+so it works everywhere, and keep the others as thin pointers to this file
+if you need tool-specific extras.)
+
+<!-- ============================================================
+     TEMPLATE STARTS HERE — this is what the agent actually reads.
+     Replace every [bracketed] placeholder below.
+     ============================================================ -->
+
+# AGENTS.md
+
+## Project overview
+
+ParkSmart is a UCSD parking decision engine that helps commuters and visitors compare eligible parking locations based on permit type, expected availability, and distance to their destination.
+
+**Status:** Active development  
+**Primary language(s)/framework(s):** Python, pandas, openpyxl, pytest, scikit-learn, FastAPI, React, and TypeScript
+
+## Repo structure
+
+This project follows the DS3 project template:
+https://github.com/ucsdds3/ds3-project-template
+
+Reusable logic lives in `src/`; notebooks are for exploration and should import from `src/` rather than redefining logic inline.
+
+```text
+.
+├── README.md
+├── AGENTS.md
+├── .env.example
+├── .gitignore
+├── amplify.yml        # AWS Amplify Hosting build for frontend/ (see Issue #25)
+├── requirements.txt
+├── pytest.ini
+├── .github/workflows/ # optional manual Linux prediction verification
+├── docs/              # data audits, assumptions, and technical documentation
+├── notebooks/         # exploration, EDA, and modeling experiments
+├── src/               # reusable data, modeling, and backend code (api/)
+├── tests/             # pytest tests for src/
+├── data/
+│   ├── raw/           # original data; never edit or commit
+│   └── processed/     # cleaned datasets and generated artifacts
+├── results/           # model evaluations, figures, and reports
+├── models/            # saved models and forecast artifacts
+├── frontend/          # React + TypeScript website (synced copy; see Website)
+├── mobile/ios/        # SwiftUI/MapKit iPhone prototype (see Native iPhone prototype)
+└── infra/             # planned AWS backend deployment configuration
+```
+
+Some planned directories may not exist yet. Update this structure as components are added.
+
+## Dev environment / setup
+
+### macOS or Linux
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Use Python built with OpenSSL and exact dependency/Python versions compatible
+with the artifact. Baseline development supports Python 3.11+; the proposed
+Lambda image uses Python 3.12. Generate Lambda artifacts in its compatible
+environment rather than assuming a local Python version is interchangeable. On
+macOS, `python3` may be Apple's Python 3.9 with LibreSSL, which cannot reach
+TLS 1.3-only services such as the public OSRM routing servers;
+`brew install python@3.12` and create the venv with `python3.12 -m venv .venv`.
+Saved model artifacts store exact library versions, so rerun
+`python -m src.train_availability` after changing Python. Full steps and a TLS
+check command: "Supported Python setup" in `docs/backend.md`.
+
+### Windows PowerShell
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+If `.env.example` exists, copy it to `.env` and add local API keys there. Never commit `.env`.
+
+QPASS workbooks are not committed to GitHub. Download them into
+`data/raw/QPASS/` with one command (safe to rerun; existing files are kept):
+
+```bash
+python -m src.download_qpass
+```
+
+## Running things
+
+
+### Informational trip alerts — Issue #35
+
+Reusable providers, cache and orchestration live in `src/trip_alerts/`; the
+shared HTTP models are in `src/api/alert_schemas.py`.
+
+`POST /trip-alerts` is the shared website/iOS interface for a registry
+`parking_location_id`, `arrival_time` and optional destination coordinates.
+It is independent of `/recommendations`; source calls never change predictions,
+eligibility, ranking or route geometry. Weather uses Open-Meteo hourly forecasts
+(UTC hour ending at/after arrival, up to the actual returned 16-day range).
+Missing values stay null; ParkSmart rain/heat/wind suggestions are not official
+weather warnings. For an exact-hour arrival, precipitation is explicitly labeled
+as the preceding hour (10:00 arrival means 09:00–10:00); temperature and wind
+refer to the 10:00 sample, not the following hour. UCSD construction layers 0–2
+are requested in WGS84 and matched
+by published effective windows and geometry within 200 m of trip points.
+Published notices do not establish entire-lot closure or route avoidance;
+upstream completeness and update frequency remain unverified.
+
+Sources are cached in memory per process: weather 15 minutes with at most one
+hour stale age, construction 10 minutes with at most 24 hours stale age.
+Failures back off for 30 seconds. Source results distinguish fresh `no_relevant`
+from `partial`, `unavailable`, `out_of_range`, `missing_location` and `stale`.
+Successful retrieval and last-attempt timestamps stay separate. Refreshes have
+four-second source budgets; a bounded two-worker service shares a 6.5-second
+response budget. Source calls do not occur at startup or during recommendations.
+When workers are busy, cache-only reads still serve matching fresh data or
+explicitly stale usable snapshots. They reapply arrival/location matching without
+HTTP calls or changes to retrieval/attempt timestamps; cache misses do not evict
+other entries or start work outside the worker limit.
+`PARKSMART_TRIP_ALERTS_ENABLED=false` disables external alert calls. No new
+dependency, model retraining, paid API or AWS provisioning is added.
+
+See `docs/trip_alerts.md` for requests, response examples, client guidance,
+configuration and Daira's hosted-verification dependency. Run offline checks:
+`python -m pytest tests/test_trip_alert_cache.py tests/test_weather_alerts.py
+tests/test_construction_alerts.py tests/test_trip_alert_api.py
+tests/test_check_trip_alerts.py -q`. Opt-in server smoke check:
+`python -m scripts.check_trip_alerts --base-url http://127.0.0.1:8000`.
+Only run against the actual approved hosted URL when Daira supplies access;
+schema/source checks alone do not prove AWS hosting or a new upstream refresh.
+The proposed contract was shared on Issue #35 with Dylan, Hanrong and Daira.
+Events remain deferred; no weather/construction data enters QPASS training.
+
+### Full AWS deployment — Issue #33
+
+The reviewed demo is deployed in Oregon (`us-west-2`), using stack/ECR
+`parksmart-backend`, private S3 artifacts, and existing mentor-managed runtime
+and CloudFormation roles. Do not create replacement roles. Current URLs, image
+digests, sizes and operator verification are in `docs/deployment_resources.md`.
+Readiness, real first/backup recommendations, public cards/map markers and a
+shorter-walk preference search have passed operator checks. Routing is disabled;
+walks are estimates. Dylan reported a successful public website check. The first
+search after long idle has not been verified within the website's 20-second
+timeout; hosted routes and alerts/failure-state checks remain pending. Automated
+results are recorded in the resource log.
+
+`bash scripts/prepare_lambda_release.sh [new-release-id]` prepares a private
+release in the pinned linux/amd64 Lambda-compatible environment. Generation runs
+offline with read-only dataset input; outputs under `models/issue33/` are ignored.
+Never regenerate a model merely to update frontend or backend application code.
+`bash scripts/build_lambda_serving.sh [release-id] [image-tag]` stages only dependency pins
+in ignored `.lambda-build/` and builds locally. For application updates reusing a
+bundle, use a new image tag; see `infra/README.md`. Check actual serving-image
+readiness with `python3 scripts/check_lambda_local.py` against the local emulator.
+
+Pin deployed images by digest and preserve immutable S3 releases. Send each
+proposed change set to Yra before execution. The approved demo uses shared
+concurrency, API rate 1/burst 2, timeout 30s, memory 1024 MB and seven-day logs;
+no provisioned concurrency. Credits and billing alerts are not spending caps.
+Track resource additions for the account owner's billing review.
+
+Amplify uses manual ZIP deployment to the existing `parksmart-website` app,
+branch `demo`. Build with the deployed API URL and API mode, then upload only
+contents of `frontend/dist/`; follow `docs/frontend_deployment.md`. ZIPs and
+private artifacts must stay out of Git. VITE variables are public, never secrets.
+
+
+### Prediction experiments and versioned storage preparation — Issue #27
+
+`python -m src.prediction_experiments` writes separate diagnostics to
+`results/issue27/` and never changes serving artifacts. It uses the existing
+whole-date development folds with a fixed holdout boundary of 2025-10-08;
+observations on or after that date are excluded even as the archive grows.
+The latest-20%-of-dates rule describes the original Issue #18 split only.
+Regression tests protect this fixed exclusion when later archive dates are added.
+Experiments compare recent-three-year and two-year-half-life averages against
+the approved baseline on identical supported record IDs. Recent estimates fall
+back to full history for exact groups absent recently. All statistics and
+recency reference dates come from training only. See `docs/issue27_predictions.md`
+for the author-declared selection criteria; their pre-execution timing has not
+been independently verified. Both experiments worsen near-full error, sufficient
+to retain historical averages regardless of the 1 pp improvement threshold.
+
+`python -m src.prepare_prediction_artifact --release-id <new-release-id>` fits
+only the approved historical model into a new private `models/issue27/` release.
+It records exact dependency versions, input/source hashes and training coverage.
+It never overwrites Issue #18 files. Pass its `metadata.json` to
+`python -m scripts.prepare_serving_bundle --metadata <metadata-path>
+--artifact <artifact-path> --output-dir <new-bundle-dir> --s3-prefix
+releases/<release-id>` to bind matching model/data/registry files. See
+`docs/model_storage.md` for complete commands, startup settings, IAM and later
+conditional S3 upload instructions. No AWS provisioning or paid usage is enabled.
+
+Tests: `python -m pytest tests/test_prediction_experiments.py
+tests/test_prepare_prediction_artifact.py tests/test_prepare_serving_bundle.py -q`.
+The optional manual `.github/workflows/prediction-validation.yml` reproduces the public
+source pipeline, experiments, release and full tests on a standard Linux runner;
+it runs only for public repositories and uses no AWS credentials, cache or
+Actions artifact storage. The current workflow after `a1da53f` removes encrypted
+release export; generated model/data files stay on the ephemeral runner and only
+aggregate results and metadata are printed to public logs. Earlier run
+42784254791 at `c8ac676` printed recipient-encrypted release ciphertext into public
+Actions logs; it was not privately transmitted. No Actions artifact upload does
+not imply private logs. Yra/the user will delete that earlier run and logs;
+deletion is pending and unconfirmed. The local
+`.venv312/` environment is ignored; use an allowed runtime with the artifact's
+exact versions. Do not change Windows security settings to load blocked modules.
+`docs/issue27_additional_data.md` assesses QPASS, status counts and occupancy
+summaries. Hanrong's multi-snapshot dataset is pending; no status data is merged.
+
+### Configured saved serving and AWS preparation — Issue #26
+
+Use any virtual environment with Python and dependencies matching the artifact;
+the folder name is arbitrary. Lambda Python 3.12 artifacts must be generated in
+its compatible environment. The configured
+entrypoint is `python -m uvicorn src.api.saved_model:create_configured_app --factory`.
+It defaults to saved mode, loads Vivaan's compatible trusted v2 artifact once
+at startup, and enforces `historical_average` as the currently approved model.
+Unsupported exact groups/time/calendar stay unknown under his saved-service
+policy. Never alter compatibility metadata or silently fit a fallback.
+GET `/readiness` is 200 only when catalog and predictions are available; health
+is independent liveness. Bad saved resources leave recommendations/readiness
+503. The original `src.api.main:app` baseline remains available explicitly.
+
+`src/api/settings.py` supports PARKSMART_MODEL_MODE, PARKSMART_APPROVED_MODEL,
+PARKSMART_ARTIFACT_PATH, PARKSMART_DATASET_PATH, PARKSMART_REGISTRY_PATH,
+PARKSMART_BUNDLE_MANIFEST and PARKSMART_CACHE_DIR. Local relative paths resolve
+against the repository; no .env file is loaded implicitly. Existing exact-origin
+CORS configuration remains. The optional S3 manifest downloads private,
+checksummed artifact/dataset/registry files with role-based GetObject access.
+No endpoint accepts uploaded pickles or S3 URLs. `src/api/lambda_handler.py`
+enters lifespan once per cold process and disables repeated Mangum lifespan
+cycles so warm requests reuse resources and do not refit/reload.
+
+`infra/` contains initial SAM/container configuration, serving dependencies,
+deployment gates, fundamentals and cleanup instructions. No deployment or AWS
+calls are authorized by adding those files. Keep DeploymentApproved=no until
+account allowances, open blockers and deployment approval are resolved. The
+Issue #33 demo uses approved shared concurrency, not the earlier reservation. No NAT/paid resources or public data bucket is configured.
+The local bundle helper is `python -m scripts.prepare_serving_bundle --s3-prefix
+releases/<release>`; output `.serving-bundle/` is private/gitignored. It copies
+existing approved resources only, never trains, rebuilds or uploads them.
+
+`docs/parking_status.md` defines a proposed separate source-count contract;
+do not invent feed values, refresh old timestamps or blend them with predictions.
+See `docs/issue26_handoff.md` for saved-mode setup and verification results.
+Run the DS3 review using `docs/codeReviewer.md`; keep its report local.
+Container checks, SAM lint and the Issue #33 deployment have passed operator
+verification; see `docs/deployment_resources.md`. Collector integration remains
+pending.
+
+### Availability prediction artifacts - Issue #18
+
+Run `python -m src.train_availability` after building the integrated CSV.
+Flags: `--dataset`, `--output-dir`, `--model-dir`. Defaults write local comparisons
+to `results/issue18/` and v2 pickle artifacts to `models/issue18/` (gitignored).
+Selection uses only supported validation rows, with the exact same support rule
+as `PredictionService.support_labels`: observed exact group, time, weekday and
+quarter; blank quarter uses historical fallback, including for regressors.
+The corrected selected model is historical averages. Unsupported requests stay
+NaN. Experimental unsupported-row scores do not determine selection. Serving
+fits use all records after frozen evaluation. Feature mode is stored explicitly;
+training and serving use `select_features`. Artifact Python/numpy/pandas/sklearn/scipy/joblib
+versions must match exactly; regenerate older/incompatible artifacts.
+Serve once-loaded artifacts with
+`python -m uvicorn src.api.saved_model:create_saved_app --factory`.
+The factory passes AvailabilityEstimator to the existing `create_app(estimator=...)`;
+no retraining occurs. Missing/incompatible artifacts stop saved-model startup.
+Regressions are described as model estimates based on historical surveys, with
+limitations only for actual fallback/time/coverage issues. See
+`docs/issue18_predictions.md` for results and `docs/recommendations_handoff.md`
+for current merged integration. Tests:
+`python -m pytest tests/test_availability_prediction.py -q`.
+
+### Native iPhone prototype
+
+`mobile/ios/` contains the SwiftUI/MapKit iOS 17+ prototype and shared Xcode
+project/scheme (Mac with Xcode 15+; no third-party Swift packages or API keys).
+Run `open mobile/ios/ParkSmart.xcodeproj`, select the ParkSmart scheme and an
+iPhone simulator, then Command-R. Setup, xcodebuild build/test commands,
+physical-device networking and demo steps are in `mobile/ios/README.md`;
+verified behavior and open items (including framework confirmation with Yra)
+are in `mobile/ios/STATUS.md`.
+
+Default mode uses visibly labeled JSON samples from shared backend examples;
+API mode never silently falls back to them. Start the backend as described in
+the FastAPI section below and set its URL in Connection. GET /locations loads
+the verified catalog; POST /recommendations sends the Apple Maps-selected
+destination name and coordinates and needs the integrated dataset (otherwise
+503). Walking times are straight-line estimates and availability is a
+historical estimate, not live occupancy. Unknown values remain unknown.
+MapKit campus lookup only frames the basemap; parking markers require verified
+catalog entries with valid coordinates. Selection uses opaque location_id
+values. URL preferences and build/signing state stay out of Git. Native iOS
+requires no browser CORS changes. Do not recreate backend prediction,
+eligibility, ranking or routing, or fabricate coordinates or metrics.
+
+Fixture checks:
+`python -m pytest tests/test_mobile_fixtures.py tests/test_api.py tests/test_api_schemas.py -q`.
+Before PR review, run the Xcode build/tests on a Mac, full pytest and the
+mentor DS3 skill; report blocked checks honestly. Keep code_review.md local.
+
+### Local FastAPI backend and website integration — Issues #12 and #19
+
+From the root with requirements installed:
+
+```bash
+python -m uvicorn src.api.main:app --reload
+MPLBACKEND=Agg python -m pytest tests/test_api.py tests/test_api_schemas.py -q
+```
+
+Open `http://127.0.0.1:8000/docs`. GET `/health` checks process liveness.
+GET `/locations` uses `config/locations.json`, supported entries only, with
+verified coordinates or null. POST `/recommendations` calls the cached
+`src.recommender.Recommender`; no prediction/ranking logic is duplicated in
+handlers. A lifespan loads the registry and processed dataset once per process
+and prepares the existing historical baseline once. No request rebuilds data,
+runs notebooks or refits the model. Missing/invalid resources produce 503;
+health and the registry remain usable if only predictions are unavailable.
+
+Schemas use snake_case, 0–1 fractions, walking minutes, nulls and UCSD-local
+arrival times, including DST validation. Permits use `src.eligibility.PERMIT_TYPES`.
+Starting location is accepted but unused and disclosed. Ready responses may
+have no backup; `predictions_unavailable` differs from `no_suitable_location`.
+Neither means parking is full. Runtime results are `is_example: false`.
+Static examples remain labeled and never provide runtime fallback estimates.
+`not_implemented` is legacy schema compatibility only.
+
+Local CORS permits GET/POST from localhost/127.0.0.1 ports 3000 and 5173; add
+deployed origins with `PARKSMART_CORS_ORIGINS` (comma-separated exact origins, no
+wildcards; `allowed_origins()` in `src/api/main.py`). Start
+Dylan's synced website using `VITE_RECOMMENDATION_SOURCE=api npm run dev` from
+`frontend/`; do not edit synced website files here. The source website client
+already sends the implemented JSON contract. See `docs/backend.md` for setup,
+architecture, failure handling and local browser testing; `docs/api_proposal.md`
+records current interfaces and local verification results. A ready
+AvailabilityEstimator wrapping the saved Issue #18 model is supplied by
+`src.api.saved_model:create_saved_app` via `create_app(estimator=...)`.
+
+### Parking patterns and benchmarks — Issue #11
+
+After building Dylan's integrated dataset, run from the repository root:
+
+```bash
+python -m src.parking_analysis
+python scripts/execute_parking_notebook.py
+python -m pytest tests/test_parking_benchmarks.py tests/test_parking_analysis.py -q
+```
+
+The CLI accepts `--dataset` and `--output-dir`; defaults are
+`data/processed/pipeline/analysis_dataset.csv` and `results/issue11/`.
+It writes EDA tables/charts, metrics, test predictions, facility errors, fallback
+counts and `summary.md`. These generated artifacts stay local and gitignored.
+`docs/issue11_findings.md` is a compact snapshot of locally verified results.
+The walkthrough is `notebooks/11_parking_patterns.ipynb`; select `.venv` as its
+VS Code Python kernel. `ipykernel` and `nbclient` are explicit requirements for
+notebook execution; JupyterLab is optional for VS Code use. The execution script
+uses the current Python via a temporary kernel spec, without user registration.
+On PowerShell systems blocking activation, use `.\.venv\Scripts\python.exe`
+in place of `python`; no execution-policy change is needed.
+
+`src.parking_benchmarks` preserves all exported readings, validates required
+fields, and keeps subtype/level distinctions. Its fixed holdout is the latest
+20% of unique survey dates, rounded up; no survey date crosses the split.
+Historical means back off from full parking group + weekday/time/quarter to
+parking group + time, parking group, then training-wide mean. Both benchmarks
+fit training data only and score identical test rows. Regression inputs exclude
+observed counts, capacity, source identifiers and quality/decision metadata.
+Primary predictions are clipped to [0, 1]; raw MAE/out-of-range rates remain
+reported. Near full means actual availability <= 10%; MAE is in percentage points.
+Coverage flags (<100 readings) are descriptive and never exclude records.
+Results apply to historical survey coverage, not full quarters or live parking.
+Review dataset assumptions with Dylan before requesting mentor review.
+
+### Integrated pipeline — Issue #10
+
+From the repository root, after `python -m src.download_qpass` and
+`python -m src.download_inventory`:
+
+```bash
+python -m src.build_dataset
+```
+
+Writes `analysis_dataset.csv`, `audit.csv.gz`, `summary.md` and supporting
+files to `data/processed/pipeline/` (gitignored); capacity batch reports go to
+`data/interim/pipeline/capacity/`. `--reuse-inventory` skips Inventory
+re-extraction. Inclusion rules, deduplication, and column definitions are in
+`docs/pipeline.md`; the quality-flag policy is `QUALITY_FLAG_BLOCKS` in
+`src/build_dataset.py`. Join observations to capacity by source key, never by
+labels. The team-excluded Winter 2025-2026 workbook (`EXCLUDED_FILES` in
+`src/download_qpass.py`) is left out of both the load and the capacity
+manifest even if it is on disk; pass the same list to `load_all_qpass(...,
+exclude=...)` elsewhere. Readings without a survey date are audited as
+`capacity:missing_survey_date`, not fatal. Every build re-reads its outputs
+with `validate_outputs` and fails on lost, multiplied, or invalid rows.
+Tests: `python -m pytest tests/test_build_dataset.py -q`. The real-data check
+runs when workbooks and outputs exist; point it at another output folder with
+`PARKSMART_PIPELINE_DIR=<dir> python -m pytest tests/test_build_dataset.py -k real -q`.
+
+### Inventory capacity selection — Issue #4
+
+From the repository root, after placing QPASS workbooks in `data/raw/QPASS/`:
+
+```bash
+python -m src.download_inventory
+python -m src.run_capacity_matching --rebuild-inventory
+python scripts/prepare_capacity_deliverables.py
+python -m pytest -q
+```
+
+The manifest is `results/capacity_matching/inventory_sources.csv`.
+`--rebuild-inventory` rereads every available original workbook without modifying it;
+without the flag, previously extracted groups are used. Missing Inventory quarters
+remain in results. Batch flags: `--manifest`, `--qpass-dir`, `--inventory-dir`, `--output-dir`.
+
+Individual supported cleaner commands:
+
+```bash
+python -m src.clean_inventory_legacy "data/raw/inventory/Inventory 2018-2019-2 October 1.xlsx" --academic-year 2018-2019 --quarter Fall
+python -m src.clean_inventory_modern "data/raw/inventory/Inventory 2025-2026-2 Fall.xlsm" --academic-year 2025-2026 --quarter Fall
+python -m src.compare_capacities --inventory "data/interim/inventory/Inventory 2025-2026-2 Fall_capacity_groups.csv" --qpass "data/raw/QPASS/QPASS 2025-2026-2 Fall.xlsm" --output-dir results/capacity_matching/fall_2025
+```
+
+Legacy tables are `5A By Lot` / `6A By Structure`; modern extraction detects
+`Pivot Table Data` headers and the appropriate quarter/Inventory By Location field.
+Never use all-category totals, sum overlapping lot/structure data, or force uncertain
+period/subtype groups. `src.clean_inventory` is deprecated and delegates to modern;
+its `capacity_status` helper remains shared.
+
+Intermediate groups/audits: `data/interim/inventory/`. Batch outputs:
+`results/capacity_matching/batch/`; combined reports live in its `combined/` folder.
+Validated delivery copies: `results/capacity_matching/deliverables/`. Preparation
+regenerates `docs/capacity_matching_summary.md` and flags validation failures.
+
+Capacity selection uses valid QPASS row/group totals first. Missing or demonstrably
+broken QPASS counts may fall back to one exact, positive, same-quarter Inventory
+group with compatible scope and consistent period metadata. Fallback is explicitly
+`assumed_same_quarter_capacity`, not verified daily capacity. Unknown zero alone
+is not proof of a formula error. Conflicting evidence leaves capacity unknown.
+The old snapshot-only/same-day acceptance rule is retired.
+
+Both sources use Issue #3 mappings through `src.capacity_labels`, retaining raw
+labels and restrictions. Whole-facility totals cannot fill a QPASS level, and broad
+category counts cannot fill a restricted subtype. Known Fall 2025 formula errors
+are source-data flags, not naming problems; their raw values remain unchanged.
+Missing/invalid readings do not create group conflicts. Missing/zero identifiers,
+including NaN, are excluded from eligible denominators and retained in reports.
+
+`selected_capacity` / compatibility alias `matched_capacity`, `capacity_source`,
+acceptance reason/basis and assumption describe selection. Summaries distinguish
+`total_observation_slots`, `eligible_observation_slots`, `excluded_observation_slots`,
+`accepted_qpass_capacities`, `accepted_inventory_capacities`, and
+`accepted_capacity_matches`. Rates always use eligible slots; overall rates use
+summed counts. `exact_key_candidate_rate` is Inventory key coverage, not acceptance.
+Unresolved types separate naming, source errors, missing Inventory, scope and period
+conflicts. See `docs/inventory_audit.md` for the full contract and assumptions.
+
+Run `python -m pytest tests/test_capacity_integration.py -q` for generated-workbook
+end-to-end checks, then full pytest. Real-workbook regeneration and the mentor's
+DS3 code-review skill remain required before requesting review.
+
+- Audit QPASS workbook structures:
+
+  ```bash
+  python -m src.qpass_inventory
+  ```
+
+- Import the reusable QPASS loader (all workbooks in `data/raw/QPASS/` in
+  one table, or one workbook):
+
+  ```python
+  from src.qpass_loader import load_all_qpass, load_qpass
+  df = load_all_qpass()
+  ```
+
+  Use `load_all_qpass()` instead of `pd.concat` over `load_qpass()`, which
+  would drop the per-file `attrs` (skipped sheets, dropped rows).
+
+- Issue #3 label exploration lives in `notebooks/01_issue3.ipynb` and uses
+  `load_all_qpass()` followed by `src.labels.prepare_label_records()`.
+  The adapter preserves loader fields and audit metadata and adds raw label
+  columns; it does not resolve aliases. Set the notebook's `qpass_dir` to
+  the folder directly containing the workbooks when using a custom location.
+  The notebook reports the team-excluded Winter 2025–2026 workbook separately
+  if present and omits it from label counts without modifying raw files.
+  Label formatting preserves existing uppercase tokens and word boundaries
+  around slashes/parentheses; uppercase words are not inferred to be aliases.
+  Attached duration abbreviations use lowercase (for example `2hr`);
+  durations and restriction wording are preserved.
+  `format_category` reorders only exact numeric Hour/Hours category labels
+  with recognized types to type-first order and normalizes Hr/Hrs/Hours to Hour;
+  additional qualifiers and separate
+  subtype restrictions are not moved or inferred.
+
+- `src.label_decisions.standardize_labels(records)` applies formatting and
+  decisions from `config/category_aliases.json` and `config/facility_aliases.json`,
+  preserves raw columns, and
+  adds field statuses plus `label_status` and reasons. Reviewed wording
+  decisions live in `config/category_review_decisions.json`; visitor qualifiers
+  and populated subtypes are flagged `keep_separate` without merging.
+  Reserved, Accessible, Carpool, and Electric Vehicle wording also receives
+  `keep_separate`: downstream eligibility checks must preserve its restrictions.
+  Closure wording containing Closed becomes `Closure`, with unresolved status.
+  Raw wording and dates remain unchanged; closure applies only to that source
+  record's survey time, not permanently to the facility. It flags the audited
+  unnamed Summer 2019 Week 2 row rather than asserting Pangea ownership.
+  Missing guard columns produce a logger warning and an audit entry in
+  `cleaned.attrs["summer_2019_check"]`; missing columns set status
+  `skipped_missing_columns`, while a complete check sets `checked` and records
+  its match count.
+  Decisions may include an exact `scope` on original columns (the P602-only
+  `2hr As` correction takes priority over the general unresolved fallback,
+  regardless of JSON list order; the most-specific matching scope wins);
+  historical category changes such as P782 SS to VA
+  are preserved separately, not treated as aliases.
+  Missing subtype alone is allowed; unchanged labels are not proof of review
+  or permit eligibility. Other specialized categories remain distinct.
+  `EV (Bagged Or Not In Use)` remains verbatim and unresolved with a note
+  explaining its ambiguous operational status.
+  Zero identifiers are unresolved across numeric/text forms, including `0.0`,
+  while original values are retained.
+
+- Issue #3 Sections 6B–8B use `src.label_reports` to group unresolved source
+  rows, validate raw-value preservation, and export current inventories,
+  unresolved reports, and examples as JSON under `results/issue3/`. These
+  reports reflect implemented decisions, not certification of unreviewed labels.
+  Section 8B calls `export_label_reports` to write compact submission reports
+  and a local `standardized_records.json`; `.gitignore` allows the compact
+  reports but keeps the full dataset ignored. Decision notes and a PR draft
+  are in `docs/issue3_label_decisions.md` and `docs/issue3_pr_description.md`.
+  Section 7C saves complete compact cleaned-label inventories for human review
+  using `src.label_reports.build_cleaned_inventories`.
+  Section 7D traces an exact raw label to workbook/sheet/source-row groups
+  for evidence review without rereading raw workbooks.
+
+- Launch notebooks:
+
+  Issue #2 walkthrough: `notebooks/reshape-qpass-observations.ipynb` imports
+  the loader adapter and validation functions from
+  `src/qpass_observations.py`. Focused tests:
+  `python -m pytest tests/test_qpass_observations.py -q`.
+  The notebook uses `load_all_qpass()` from task #1, then
+  `reshape_loaded_observations()` and `validate_observations()` from task #2.
+  Reports cover all local workbooks and retain loader audit metadata.
+  Shared loader names are retained: `type` is category and `sub_type` is
+  subtype. Optional format-absent fields are informational. Blank and text
+  counts have separate flags; exact repeats and conflicting identities have
+  separate flags. The loader preserves per-sheet optional-header presence as
+  `sub_type_in_format` / `report_type_in_format`, and raw Order as `source_order`.
+  Optional statuses distinguish absent headers from blank cells. Format C
+  differing-capacity groups use `ambiguous_allocation_requires_review`;
+  same-capacity subsets with different open counts also retain
+  `conflicting_observation`, including inside ambiguous groups. No rows
+  are deleted or combined. Audited observations are integration-tested with
+  `src.labels.prepare_label_records()` from main. All parsing uses the shared loader; see
+  `docs/qpass_observation_contract.md` for the output contract.
+
+  ```bash
+  jupyter lab notebooks/
+  ```
+
+### Website — Issue #20
+
+`frontend/` is a one-way copy of
+[dylanwang-main/ParkSmart-Website](https://github.com/dylanwang-main/ParkSmart-Website),
+which is synced with Google AI Studio. **Never edit files in `frontend/`**; the
+next sync overwrites them. Change ParkSmart-Website, then from the repo root:
+
+```bash
+scripts/sync_frontend.sh            # or --ref <branch|commit>, --source <clone>
+```
+
+It needs bash, `tar` and `rsync` (macOS/Linux, or WSL/Git Bash on Windows).
+The script copies tracked files only, drops AI Studio's `bun.lock`, keeps local
+`node_modules/`, `dist/` and `.env.local`, refreshes `package-lock.json`, and runs
+the tests, type check and build. Review `git diff -- frontend` before committing.
+
+Run the website (Node 20.19+ or 22.12+), from `frontend/`:
+
+```bash
+npm ci
+npm run dev       # http://localhost:3000, on the backend CORS allowlist
+npm test          # Vitest
+npm run lint      # TypeScript type check
+npm run build
+```
+
+`VITE_API_BASE_URL` (default `http://127.0.0.1:8000`) sets the backend; override it
+in `frontend/.env.local`, never with secrets. Searches use labeled sample data
+unless `VITE_RECOMMENDATION_SOURCE=api`, which sends them to
+`POST /recommendations` (`frontend/src/api/recommendations.ts`) and never falls
+back to sample data. Website data marked sample in `frontend/README.md` is not a
+real prediction. Website pins must use registry `location_id` values; a test in
+`tests/test_location_registry.py` checks this. In API mode the selected result
+also gets driving/walking routes from `POST /routes` (see Issue #25 below).
+Website changes are made on a branch of ParkSmart-Website, merged there, then
+synced; `--source` syncs a local clone's committed `HEAD` for testing.
+
+### Routes and website hosting — Issue #25
+
+`POST /routes` returns one driving or walking route (GeoJSON `[lon, lat]`
+geometry, meters, miles, minutes, `traffic_aware: false`) between two coordinates.
+Providers live in `src/routing.py`: OpenRouteService (`ORS_API_KEY`) or OSRM
+(public FOSSGIS servers, light use only). Unset means `ors` with a key, otherwise
+`osrm`, so routes work with no setup; `PARKSMART_ROUTING_PROVIDER=none` turns them
+off (503) and recommendations keep working. Keys stay on the backend, never in `VITE_` variables or Git.
+When routing is on, `/recommendations` routes the top 5 locations' walks, then
+any unchecked first choice/backup (`MAX_ROUTING_ROUNDS`, one 8 s budget per
+request via `walk_router`), drops routes over 20 minutes and rescores. Picks
+without a route keep straight-line times labeled unchecked; never say the
+20-minute limit was checked for them (see `docs/recommendations.md`). Every
+FOSSGIS request shares one per-process 1 request/s throttle; routes that snap a
+point over 150 m (walking) / 250 m (driving) are rejected. Tests set
+`PARKSMART_ROUTING_PROVIDER=none` (`tests/conftest.py`), so they never call a
+provider.
+Trips are capped (driving 150 km, walking 5 km straight line), successes are
+cached in memory, and provider errors are logged, not returned. Parking ends are
+registry building points, not verified entrances; responses say so. Never call
+travel times traffic-aware. FOSSGIS needs TLS 1.3; without it (macOS Xcode
+Python 3.9) startup logs a warning and turns routes off (503). At run time only a
+confirmed unsupported-TLS error turns them off; certificate and other SSL errors
+are provider errors and routing stays on. Provider calls never start after their
+request's deadline (8 s per recommendation, 10 s per `/routes` call).
+With a rate-limited provider (public FOSSGIS or ORS, per mode), `/routes` starts
+provider calls at most every 2 s so it cannot starve searches; self-hosted
+servers are not gated. ORS is spaced 1.6 s apart; only its error codes
+2009/2010 mean "no route" (other 404s are 502 config errors). "No route" answers
+are cached for an hour. `PARKSMART_CORS_ORIGINS` entries are normalized like
+browser Origin headers (lowercase, punycode, no default port).
+Card and directions minutes both come from `route_minutes`/`display_minutes`. Contract, configuration, public-server limits,
+deployment plan, Lambda handoff and pilot results: `docs/routing.md`. The
+website's "Fix the map" OSM link lives in ParkSmart-Website (synced);
+copyable JSON is in `docs/examples/backend/route_*.json` (validated by
+`tests/test_api_schemas.py`). Tests:
+`python -m pytest tests/test_routing.py tests/test_api.py -q`.
+
+`amplify.yml` builds `frontend/` on AWS Amplify Hosting (monorepo `appRoot:
+frontend`; set Node.js 22 and `VITE_API_BASE_URL`/`VITE_RECOMMENDATION_SOURCE=api`
+in the Amplify console). Deploy only with funded DS3 AWS access; never enable
+paid usage. Steps, verification and cleanup: `docs/frontend_deployment.md`.
+
+### Location registry — Issue #20
+
+`config/locations.json` holds every parking location with a stable
+`location_id`, its standardized dataset facilities, coordinates and
+`registry_status`; `src/location_registry.py` validates it. Check it against the
+integrated dataset with `python -m src.location_registry`; tests:
+`python -m pytest tests/test_location_registry.py -q`. Never rename or reuse a
+`location_id`. Every dataset facility must map to exactly one location. Keep
+predictions keyed by facility/category/subtype/level and attach `location_id`
+with `location_groups()`; only `supported` locations may be recommended.
+Recent observations are not proof of current use. See
+`docs/location_registry.md`.
+
+### Eligibility and ranking — Issue #20
+
+`src/eligibility.check_eligibility()` returns `allowed`, `not_allowed` or
+`needs_verification` for a permit (`A`, `B`, `S`, `SR`, `D`, `V`), parking group
+and time; only `allowed` is recommended, and unknown or conflicting rules are
+never treated as allowed. With a departure, every rule boundary during the
+stay is checked; all boundaries must stay on the 30-minute grid
+(`BOUNDARY_GRID_MINUTES`). Holidays and quarters come from the official 2026-27
+calendar in `src/ucsd_calendar.py` (verified Sep 21, 2026 to Sep 6, 2027);
+update it from the Registrar's calendar each year. `src/availability.py`'s
+`AvailabilityEstimator` attaches historical-average estimates for an arrival
+time and labels any estimate that uses another survey time or a fallback
+average; any model following the prediction contract in its docstring can
+replace the default `HistoricalAverage`, and NaN predictions stay missing.
+The proposed shared interface for all teammates is in `docs/api_proposal.md`. `src/ranking.recommend()` takes latest-quarter groups from
+`current_groups()` with those estimates, and returns a first choice and
+distinct backup (`to_api()` matches `ParkingChoice`); limited estimates and
+unverified dates appear in explanations and limitations. Missing estimates are
+reported, never filled in. Requests may add `preference` (`shorter_walk`,
+`balanced` default, `more_availability`; `PREFERENCE_WEIGHTS`) and
+`max_walk_minutes` (3–20); responses echo both and add a ranked `options` list
+whose choices carry `rank`, `walking_time_source` and `fit_reason`. Never call
+the availability percentage a probability of finding parking. Rule sources, weights, walking assumptions and
+tie-breaking are in `docs/recommendations.md`; update it and the rule tests
+when permit rules change. Tests:
+`python -m pytest tests/test_eligibility.py tests/test_ranking.py tests/test_availability.py tests/test_ucsd_calendar.py -q`.
+`src/recommender.Recommender.from_files()` loads all of this once and answers
+requests with `.recommend(permit, arrival, destination)`; try it with
+`python -m src.recommender --permit S --arrival 2026-11-03T09:00 --lat 32.8811 --lon -117.2376`
+(optional `--preference shorter_walk|balanced|more_availability`, `--max-walk MINUTES`)
+(needs the integrated dataset). Tests: `python -m pytest tests/test_recommender.py -q`.
+`POST /recommendations` now calls this recommender; the original integration
+handoff is `docs/recommendations_handoff.md`, and current setup/limitations are
+in `docs/backend.md`.
+
+- Commands for future forecasting deployment should be added after it is
+  implemented and tested. Backend and parking analysis commands are documented
+  above.
+
+## Testing
+
+- Unit tests live in `tests/` and run with:
+
+  ```bash
+  pytest
+  ```
+
+- Some tests use generated sample workbooks and do not require the original data.
+- `tests/test_label_integration.py` runs the shared loader and label pipeline
+  together using generated workbooks and checks row counts and raw/provenance
+  preservation through `validate_label_output`. Run it with:
+
+  ```bash
+  python -m pytest tests/test_label_integration.py -q
+  ```
+
+- Real-data tests require the QPASS files in `data/raw/QPASS/`.
+- Before opening or updating a PR, run `pytest` and make sure it passes.
+- New reusable logic in `src/` should include corresponding tests in `tests/`.
+- Important correctness checks should not exist only inside notebooks.
+
+## Code style & conventions
+
+- Follow PEP 8.
+- Aim for a maximum line length of approximately 88 characters.
+- The team has not adopted an automatic formatter or linter yet. If one is added, document its command here.
+- Every public function and class in `src/` should have a docstring explaining its purpose, parameters, and return value.
+- Avoid magic numbers. Use named constants or configuration values and document where important values come from.
+- Keep reusable logic in `src/`, not only in notebooks.
+- Preserve original facility and parking-category values when creating standardized columns.
+- Flag uncertain mappings instead of guessing.
+- Do not silently drop observations, sheets, or invalid values.
+- Preserve provenance columns such as academic year, quarter, and source file.
+- Add any new dependency to `requirements.txt`.
+- Use a fixed random seed for modeling when randomness is involved.
+
+## Git / PR workflow
+
+- Create one GitHub Issue for each task, bug, or feature.
+- Begin work from the latest version of `main`.
+- Work on a separate branch, never directly on `main`.
+- Use one branch and one pull request per Issue.
+- Keep pull requests focused on the assigned task.
+- Include `Closes #<issue-number>` in the pull-request description.
+- Explain what changed, how it was tested, and any unresolved questions.
+- Before opening a PR, update the branch from main, run `pytest`, and run
+  the mentor-provided DS3 code-review skill against main. Read the findings,
+  fix important issues, and rerun tests. Do not commit `code_review.md`.
+- Another team member should review or test the work when possible.
+- Only the project mentor may approve and merge pull requests into `main`.
+- Team members must not merge their own pull requests.
+- After a PR is merged, pull the latest `main` before creating the next branch.
+
+## Keeping this file up to date
+
+This is a standing instruction, not optional.
+
+Whenever an agent or team member changes the repository structure, setup process, dependencies, commands, tests, conventions, API behavior, or deployment workflow, update the relevant section of `AGENTS.md` in the same pull request.
+
+- Keep updates factual and concise.
+- Test commands before documenting them.
+- Fix outdated instructions instead of adding conflicting instructions.
+- Remove “planned” labels after components are implemented.
+- Mention changes to `AGENTS.md` in the pull-request summary.
+
+## Things the agent should never do in this repo
+
+- Never commit or hardcode passwords, API keys, credentials, or `.env` contents.
+- Never push directly to `main` or merge a pull request.
+- Never delete, edit, or overwrite files in `data/raw/`.
+- Never commit virtual environments or large raw datasets.
+- Never install packages without explaining why and updating `requirements.txt`.
+- Never silently drop observations or replace missing values without documentation.
+- Never guess uncertain facility, category, capacity, or permit mappings.
+- Never remove or weaken tests simply to make them pass.
+- Never treat Parking Occupancy summaries as individual training observations without verification.
+- Never describe forecasts as guaranteed live parking availability.
+- Never make unrelated changes within a focused Issue or pull request.
+- Never change project commands or structure without updating `AGENTS.md`.
+
+## Useful context
+
+ParkSmart is being developed through the UC San Diego Data Science Student Society projects program.
+
+The MVP should support every parking location that can be reliably recovered from the available public data. Locations with unresolved names, capacities, or parking categories should be flagged and documented.
+
+The main public data sources are:
+
+- UCSD QPASS workbooks
+- Parking Space Inventory reports
+- Parking Occupancy summary reports
+- Official permit rules
+- Geographic facility and entrance information
+- Routing APIs
+- Optional current parking-status information, if it can be validated
+
+Important limitations:
+
+- Detailed QPASS observations mainly cover the beginning of each quarter.
+- Several academic years and quarters are missing from the public archive.
+- Parking capacities and category labels may change over time.
+- Parking Occupancy Reports are summaries, not dated training observations.
+- Forecasts represent expected historical conditions and do not guarantee an available space.
+- Optional current parking information must show its retrieval time.
+- ParkSmart must continue to work when optional live-data or routing services are unavailable.
+
+The data workflow is:
+
+```text
+Public parking data
+→ workbook loading and auditing
+→ standardized observations
+→ facility and category reconciliation
+→ capacity matching
+→ cleaned analytical dataset
+→ baseline and model evaluation
+→ availability forecasts
+```
+
+The planned user workflow is:
+
+```text
+User inputs
+→ permit filtering
+→ availability lookup
+→ distance and route comparison
+→ parking-location ranking
+→ first choice and backup
+→ interactive map and recommendation explanation
+```
+
+## Period validation and rerun behavior
+
+Missing/invalid observation dates, nonconsecutive academic-year labels, unknown
+quarters, or calendar-year conflicts block both capacity sources and set
+`qpass_period_metadata_conflict`. Summer/Fall use the starting calendar year;
+Winter/Spring use the ending year. This is a metadata consistency check, not an
+exact quarter-boundary or survey/inventory date-equality rule. The raw date and
+period labels remain unchanged; unresolved cases use `period_metadata_conflict`.
+All-missing-Inventory batches write header-only Inventory datasets, replacing
+prior outputs. `src.audit_inventory` is a deprecated explicit-period wrapper for
+the modern cleaner; it no longer filters missing-identifier source rows.
+
+## Legacy summary scope and canonical filenames
+
+`legacy_summary_category_requires_review` is an unverified Inventory category
+scope. Such groups remain in audit outputs but cannot contradict QPASS capacity
+or provide fallback. The same restriction applies to legacy-schema records with
+a missing scope marker. An explicit exact-group scope decision requires both
+`scope_verified=True` and nonblank `scope_verification_evidence` on the extracted
+group; retain the original category_scope marker. Neither matching labels nor
+a positive count establish scope equivalence. No legacy scopes are automatically
+marked verified by the pipeline. Comparable verified-source disagreements remain
+unresolved. Modern layout scope checks remain in force.
+
+The downloader saves the filename linked by the archive, including spaces.
+The Fall 2025 source is `Inventory 2025-2026-2 Fall.xlsm`; generated group files
+use that same stem. The former local underscore alias is no longer consulted.
+Existing local copies are preserved, but rerun `python -m src.download_inventory`
+to generate a manifest using canonical downloaded filenames; no manual rename
+is needed. Quote paths containing spaces.

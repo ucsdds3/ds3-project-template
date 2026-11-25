@@ -1,0 +1,335 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Client for the ParkSmart FastAPI backend's POST /recommendations.
+ *
+ * Field names follow the backend contract (docs/backend.md and
+ * src/api/schemas.py in yraclimaco/parksmart): snake_case JSON, availability
+ * as a 0-1 fraction, walking time in minutes, and null for anything unknown.
+ * Null is never shown as 0.
+ */
+
+import { API_BASE_URL } from '../config.ts';
+import { ALL_PARKING } from '../data/parkingLots.ts';
+import { findDestination } from '../data/destinations.ts';
+import { DEFAULT_PRIORITY } from '../constants.ts';
+import type {
+  BackendEstimate,
+  ParkingLot,
+  ParkingPlannerRequest,
+  ParkingRecommendation,
+  TripPriority,
+} from '../types.ts';
+import { withTimeout } from './timeout.ts';
+
+export interface ApiCoordinates {
+  latitude: number;
+  longitude: number;
+}
+
+export interface ApiLocation {
+  location_id: string;
+  name: string;
+  coordinates: ApiCoordinates | null;
+}
+
+export type ApiWalkingSource = 'routed' | 'straight_line' | 'straight_line_unchecked';
+
+export interface ApiChoice {
+  location: ApiLocation;
+  estimated_available_fraction: number | null;
+  estimated_walking_minutes: number | null;
+  explanation: string;
+  /** Newer backends only (walk vs availability preference). */
+  walking_time_source?: ApiWalkingSource | null;
+  fit_reason?: string | null;
+  rank?: number | null;
+}
+
+/** Backend result states. predictions_unavailable is the proposed addition from #20. */
+export type ApiStatus = 'ready' | 'no_suitable_location' | 'not_implemented' | 'predictions_unavailable';
+
+export interface ApiRecommendationResponse {
+  status: ApiStatus;
+  is_example: boolean;
+  arrival_time: string;
+  first_choice: ApiChoice | null;
+  backup_choice: ApiChoice | null;
+  /** Ranked locations, best first, including the picks. Missing from older backends. */
+  options?: ApiChoice[];
+  preference?: TripPriority;
+  max_walk_minutes?: number;
+  explanation: string;
+  limitations: string[];
+}
+
+export interface ApiRecommendationRequest {
+  destination: { name: string; coordinates: ApiCoordinates | null };
+  /** Local UCSD time without an offset, e.g. "2026-10-29T10:00:00". */
+  arrival_time: string;
+  permit_type: string;
+  /** Left out for the default ("balanced"). */
+  preference?: TripPriority;
+  /** Left out for the backend's default (20 minutes). */
+  max_walk_minutes?: number;
+}
+
+/** What the website does with a request: show results, or explain why it can't. */
+export type RecommendationOutcome =
+  | { kind: 'ok'; response: ApiRecommendationResponse; recommendations: ParkingRecommendation[] }
+  | { kind: 'error'; message: string };
+
+const STATUSES: ReadonlySet<string> = new Set([
+  'ready',
+  'no_suitable_location',
+  'not_implemented',
+  'predictions_unavailable',
+]);
+
+/** Builds the JSON body; null if the destination is unknown. */
+export function toApiRequest(request: ParkingPlannerRequest): ApiRecommendationRequest | null {
+  const destination = findDestination(request.destinationId);
+  if (!destination) return null;
+  return {
+    destination: {
+      name: destination.name,
+      coordinates: { latitude: destination.latitude, longitude: destination.longitude },
+    },
+    arrival_time: `${request.arrivalDate}T${request.arrivalTime}:00`,
+    permit_type: request.permitType,
+    // Sent only when changed from the defaults, so a backend without the
+    // preference feature (which rejects unknown fields) still answers
+    ...(request.priority && request.priority !== DEFAULT_PRIORITY ? { preference: request.priority } : {}),
+    ...(request.maxWalkMinutes != null ? { max_walk_minutes: request.maxWalkMinutes } : {}),
+  };
+}
+
+/**
+ * How long a search may take before the website gives up and shows an error.
+ * Generous on purpose: a backend on AWS Lambda can take several seconds to start
+ * ("cold start") when nobody has used it recently.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
+const TIMEOUT_MESSAGE = 'ParkSmart is taking too long to answer. Try again in a moment.';
+
+interface FetchOptions {
+  fetchImpl?: typeof fetch;
+  /** Cancels the request, e.g. when a newer search starts. Rejects with AbortError. */
+  signal?: AbortSignal;
+  baseUrl?: string;
+  /** Overrides REQUEST_TIMEOUT_MS (tests). */
+  timeoutMs?: number;
+}
+
+/**
+ * Sends the trip to the backend and returns results or a message to show.
+ * Never throws for HTTP, network or timeout problems, and never falls back to
+ * sample data. Only a cancellation through `signal` rejects (AbortError).
+ */
+export async function fetchRecommendations(
+  request: ParkingPlannerRequest,
+  options: FetchOptions = {}
+): Promise<RecommendationOutcome> {
+  const { signal, timeoutMs = REQUEST_TIMEOUT_MS, ...rest } = options;
+  return withTimeout<RecommendationOutcome>(
+    (combined) => requestRecommendations(request, { ...rest, signal: combined }),
+    () => ({ kind: 'error', message: TIMEOUT_MESSAGE }),
+    { signal, timeoutMs }
+  );
+}
+
+/** One POST /recommendations without the timeout. Rejects only on abort. */
+async function requestRecommendations(
+  request: ParkingPlannerRequest,
+  options: { fetchImpl?: typeof fetch; signal: AbortSignal; baseUrl?: string }
+): Promise<RecommendationOutcome> {
+  const body = toApiRequest(request);
+  if (!body) return { kind: 'error', message: 'Pick a destination from the list first.' };
+  const baseUrl = options.baseUrl ?? API_BASE_URL;
+  const fetchImpl = options.fetchImpl ?? fetch;
+
+  // Messages are written for visitors; technical details go to the console.
+  let response: Response;
+  try {
+    response = await fetchImpl(`${baseUrl}/recommendations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error;
+    console.warn(
+      `[ParkSmart] Could not reach the backend at ${baseUrl}. Check that it is running and allows requests from this site (CORS).`
+    );
+    return { kind: 'error', message: "Couldn't reach ParkSmart right now. Check your connection and try again." };
+  }
+
+  if (response.status === 404) {
+    console.warn(`[ParkSmart] POST ${baseUrl}/recommendations returned 404.`);
+    return { kind: 'error', message: 'Parking recommendations are not available right now.' };
+  }
+  if (response.status === 422) {
+    return { kind: 'error', message: `These trip details can't be checked: ${await validationDetail(response)}` };
+  }
+  if (!response.ok) {
+    return {
+      kind: 'error',
+      message: `ParkSmart couldn't work out recommendations right now (error ${response.status}). Try again in a moment.`,
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error;
+    return { kind: 'error', message: 'ParkSmart sent a response the website could not read.' };
+  }
+  const parsed = parseResponse(data);
+  if (!parsed) {
+    console.warn('[ParkSmart] Backend response did not match the agreed format:', data);
+    return { kind: 'error', message: 'ParkSmart sent a response that did not match the agreed format.' };
+  }
+  return { kind: 'ok', response: parsed, recommendations: toRecommendations(parsed) };
+}
+
+/** Checks the response shape; returns null if it is not the agreed contract. */
+export function parseResponse(data: unknown): ApiRecommendationResponse | null {
+  if (!isObject(data)) return null;
+  const { status, is_example, arrival_time, first_choice, backup_choice, explanation, limitations } = data;
+  if (typeof status !== 'string' || !STATUSES.has(status)) return null;
+  if (typeof is_example !== 'boolean' || typeof arrival_time !== 'string') return null;
+  if (typeof explanation !== 'string') return null;
+  if (!Array.isArray(limitations) || !limitations.every((note) => typeof note === 'string')) return null;
+  if (!isChoiceOrNull(first_choice) || !isChoiceOrNull(backup_choice)) return null;
+  const { options } = data;
+  if (options !== undefined && (!Array.isArray(options) || !options.every((o) => o !== null && isChoiceOrNull(o)))) {
+    return null;
+  }
+  if (status === 'ready' && first_choice === null) return null;
+  if (status !== 'ready' && (first_choice !== null || backup_choice !== null)) return null;
+  return data as unknown as ApiRecommendationResponse;
+}
+
+/** Turns API choices into the cards the results list already renders. */
+export function toRecommendations(response: ApiRecommendationResponse): ParkingRecommendation[] {
+  const choices: [ApiChoice | null, string][] = [
+    [response.first_choice, 'First choice'],
+    [response.backup_choice, 'Backup'],
+  ];
+  return choices.flatMap(([choice, badgeLabel], index) =>
+    choice
+      ? [{
+          badgeLabel,
+          rank: index + 1,
+          lot: lotFor(choice.location),
+          score: 0,
+          reason: choice.explanation,
+          access: { status: 'never' as const },
+          estimate: toEstimate(choice, response.is_example),
+        }]
+      : []
+  );
+}
+
+/** Backend numbers and reasons for one choice, as the cards and detail card use them. */
+export function toEstimate(choice: ApiChoice, isExample: boolean): BackendEstimate {
+  return {
+    availablePercent:
+      choice.estimated_available_fraction === null ? null : Math.round(choice.estimated_available_fraction * 100),
+    walkingMinutes:
+      choice.estimated_walking_minutes === null ? null : Math.round(choice.estimated_walking_minutes),
+    isExample,
+    walkingSource: choice.walking_time_source ?? null,
+    fitReason: choice.fit_reason ?? null,
+    explanation: choice.explanation,
+    rank: choice.rank ?? null,
+  };
+}
+
+/** One ranked location for map markers and the detail card. */
+export interface RankedOption {
+  /** "First choice", "Backup", then "#3", "#4", ... */
+  badgeLabel: string;
+  estimate: BackendEstimate;
+}
+
+/**
+ * Ranked options keyed by location ID, so clicking any ranked marker can show its
+ * estimate, walk and fit reason. Falls back to the two picks for older backends.
+ */
+export function toRankedOptions(response: ApiRecommendationResponse): Record<string, RankedOption> {
+  const choices =
+    response.options && response.options.length > 0
+      ? response.options
+      : [response.first_choice, response.backup_choice].filter((c): c is ApiChoice => c !== null);
+  const ranked: Record<string, RankedOption> = {};
+  choices.forEach((choice, index) => {
+    const rank = choice.rank ?? index + 1;
+    ranked[choice.location.location_id] = {
+      badgeLabel: rank === 1 ? 'First choice' : rank === 2 ? 'Backup' : `#${rank}`,
+      estimate: toEstimate(choice, response.is_example),
+    };
+  });
+  return ranked;
+}
+
+/**
+ * The website's own lot (pin, kind, access note) when the ID matches; otherwise a lot
+ * built from the API. Its sample fields are never displayed for API results.
+ */
+function lotFor(location: ApiLocation): ParkingLot {
+  const known = ALL_PARKING.find((lot) => lot.locationId === location.location_id);
+  if (known) return { ...known, name: location.name };
+  return {
+    locationId: location.location_id,
+    name: location.name,
+    latitude: location.coordinates?.latitude ?? Number.NaN,
+    longitude: location.coordinates?.longitude ?? Number.NaN,
+    estimatedAvailabilityPercent: 0,
+    walkingMinutes: 0,
+    spaceCategories: [],
+    kind: 'lot',
+  };
+}
+
+async function validationDetail(response: Response): Promise<string> {
+  try {
+    const body = await response.json();
+    const detail = isObject(body) ? body.detail : undefined;
+    if (Array.isArray(detail) && detail.length > 0 && isObject(detail[0]) && typeof detail[0].msg === 'string') {
+      return detail[0].msg;
+    }
+    if (typeof detail === 'string') return detail;
+  } catch {
+    // Fall through to the generic message.
+  }
+  return 'check the destination, arrival time and permit.';
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNullableNumber(value: unknown, min: number, max: number): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max);
+}
+
+function isChoiceOrNull(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isObject(value) || !isObject(value.location)) return false;
+  const { location } = value;
+  if (typeof location.location_id !== 'string' || typeof location.name !== 'string') return false;
+  if (location.coordinates !== null && !isObject(location.coordinates)) return false;
+  return (
+    isNullableNumber(value.estimated_available_fraction, 0, 1) &&
+    isNullableNumber(value.estimated_walking_minutes, 0, Number.POSITIVE_INFINITY) &&
+    typeof value.explanation === 'string' &&
+    (value.fit_reason === undefined || value.fit_reason === null || typeof value.fit_reason === 'string')
+  );
+}

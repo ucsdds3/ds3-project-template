@@ -1,0 +1,69 @@
+{
+  "schema_version": "0.1",
+  "status": "ready",
+  "is_example": true,
+  "arrival_time": "2026-11-03T10:00:00-08:00",
+  "time_zone": "America/Los_Angeles",
+  "preference": "balanced",
+  "max_walk_minutes": 20,
+  "first_choice": {
+    "location": {
+      "location_id": "gilman-ps",
+      "name": "Gilman Parking Structure",
+      "coordinates": null
+    },
+    "estimated_available_fraction": null,
+    "estimated_walking_minutes": null,
+    "walking_time_source": null,
+    "explanation": "EXAMPLE ONLY: layout placeholder, not an evaluated recommendation.",
+    "fit_reason": "EXAMPLE ONLY: why this location fits the chosen preference.",
+    "rank": 1
+  },
+  "backup_choice": {
+    "location": {
+      "location_id": "hopkins-ps",
+      "name": "Hopkins Parking Structure",
+      "coordinates": null
+    },
+    "estimated_available_fraction": null,
+    "estimated_walking_minutes": null,
+    "walking_time_source": null,
+    "explanation": "EXAMPLE ONLY: layout placeholder, not an evaluated recommendation.",
+    "fit_reason": "EXAMPLE ONLY: why this location fits the chosen preference.",
+    "rank": 2
+  },
+  "options": [
+    {
+      "location": {
+        "location_id": "gilman-ps",
+        "name": "Gilman Parking Structure",
+        "coordinates": null
+      },
+      "estimated_available_fraction": null,
+      "estimated_walking_minutes": null,
+      "walking_time_source": null,
+      "explanation": "EXAMPLE ONLY: layout placeholder, not an evaluated recommendation.",
+      "fit_reason": "EXAMPLE ONLY: why this location fits the chosen preference.",
+      "rank": 1
+    },
+    {
+      "location": {
+        "location_id": "hopkins-ps",
+        "name": "Hopkins Parking Structure",
+        "coordinates": null
+      },
+      "estimated_available_fraction": null,
+      "estimated_walking_minutes": null,
+      "walking_time_source": null,
+      "explanation": "EXAMPLE ONLY: layout placeholder, not an evaluated recommendation.",
+      "fit_reason": "EXAMPLE ONLY: why this location fits the chosen preference.",
+      "rank": 2
+    }
+  ],
+  "explanation": "EXAMPLE ONLY: demonstrates a future response shape, not a prediction.",
+  "limitations": [
+    "Real registry IDs are used only to illustrate the response shape; the choice ordering is fictional.",
+    "Coordinates, eligibility, availability and walking estimates are not asserted by this static example.",
+    "This static example is never loaded by the API."
+  ]
+}

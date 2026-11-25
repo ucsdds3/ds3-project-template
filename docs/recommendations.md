@@ -1,0 +1,225 @@
+# Eligibility and ranking (Issue #20)
+
+`src/eligibility.py` decides whether a permit may use a parking group at a
+time. `src/ranking.py` turns predicted availability into a first choice and a
+distinct backup. Both are plain functions so the FastAPI endpoint (#19) can
+call them; no prediction or ranking logic belongs in endpoint handlers.
+
+```bash
+python -m pytest tests/test_eligibility.py tests/test_ranking.py -q
+```
+
+## Calling it from the backend
+
+```python
+from src.recommender import Recommender
+
+recommender = Recommender.from_files()       # once: dataset, registry, estimator
+result = recommender.recommend("S", arrival,
+                               destination={"latitude": 32.881,
+                                            "longitude": -117.238},
+                               departure=None)
+result.to_api()   # status, first_choice, backup_choice, explanation, limitations
+```
+
+From a shell: `python -m src.recommender --permit S --arrival 2026-11-03T09:00
+--lat 32.8811 --lon -117.2376` prints the same JSON. `Recommender` wires together
+`current_groups()` (registry), `AvailabilityEstimator.attach()` (estimates) and
+`ranking.recommend()`; call those directly to swap one piece.
+
+`to_api()` choices match `src.api.schemas.ParkingChoice`. The result also keeps
+`parking_group`, `score`, `estimate_basis`, `estimate_survey_time`,
+`estimate_note`, `allowed_until` and `counts` (why candidates were skipped) for
+the website and debugging. The full endpoint walkthrough is
+`docs/recommendations_handoff.md`.
+
+Result `status`:
+
+| Status | Meaning |
+| --- | --- |
+| `ready` | First choice found; `backup_choice` may be null if only one location qualifies. |
+| `no_suitable_location` | Evaluation found nothing eligible within the walking limit. Not proof parking is full. |
+| `predictions_unavailable` | Eligible parking exists but none has an estimate. Accepted by `RecommendationResponse` and the website; a test keeps all three in sync. |
+
+## Permit rules
+
+Source: the team's *UCSD Parking Domain Research v1.2* (Oct 11, 2026), rules
+checked 2026-10-28. Official pages it cites: permits
+<https://transportation.ucsd.edu/commute/permits/index.html>, Fall 2026 notices
+<https://transportation.ucsd.edu/contact/news.html>, visitor parking
+<https://transportation.ucsd.edu/visit/parking.html>, citation guidance
+<https://transportation.ucsd.edu/contact/citations/avoiding.html>. Recheck those
+pages before relying on the rules.
+
+Permit codes: `A`, `B`, `S`, `SR`, `D`, `V` (V = pay-station visitor permit).
+
+| Permit | Any time | 4 PM–8 AM weekdays, all weekend | Other |
+| --- | --- | --- | --- |
+| A | A, B, S, D\*; posted A 24/7 | — | |
+| B | B, S, D\* | A | |
+| S | S, D\* | A, B | |
+| SR | SR, S, D\* | A, B | |
+| D | D | A, B, S | |
+| V | Visitor, D\* | B, S until 7:30 AM | A 5 PM–7:30 AM every day (no all-day weekend access) |
+
+\* Published privilege, but returned as `needs_verification` (see D stalls below).
+Pairs not listed (for example S in SR stalls) are `not_allowed`.
+
+Each check returns `allowed`, `not_allowed` or `needs_verification`. Only
+`allowed` is ever recommended. Conservative choices:
+
+- **D stalls** for any non-D permit: `needs_verification`. The Sept 18, 2026
+  notice restricts D parking and its effect on other permits is unresolved (C1).
+- **Specialized stalls** (reserved, accessible, carpool, EV, SuperSaver,
+  motorcycle, UC vehicle, patient, Preuss, SIO, oversized and similar):
+  always `needs_verification`.
+- **Posted A 24/7 stalls:** A permits only.
+- **Time-limited stalls** (`2 Hours`, `5 Min`, ...): `needs_verification`
+  without a departure time; with one, allowed only if the stay fits the limit.
+- **University holidays:** all 14 holiday days on the official
+  [2026-27 calendar](https://blink.ucsd.edu/instructors/resources/academic/calendars/2026.html)
+  (Veterans Day through Labor Day 2027), stored in `src/ucsd_calendar.py`.
+  Fees are waived but category rules are unconfirmed, so any result that would
+  differ between weekday and weekend rules is `needs_verification`. Only
+  Sep 21, 2026 to Sep 6, 2027 is verified; other dates get a limitation saying
+  holidays were not checked.
+- **Gliderport P386:** overnight parking is banned but the boundary is not
+  published; outside the 6 AM-6 PM (Nov-Mar) / 6 AM-8 PM (Apr-Oct) daylight
+  window it is `needs_verification`.
+- **Lot-wide supplemental permits** (SIO, Preuss, Medical Center, International
+  Center, Sanford): the registry marks these `restricted`, so they are never
+  candidates.
+- With a `departure`, the whole stay is checked at arrival and at every
+  wall-clock :00/:15/:30/:45 mark before departure. Every published boundary is
+  on :00 or :30 (a test enforces this), so a cutoff inside the final partial
+  interval is caught: B in A stalls from 7:50 to 8:04 AM is `not_allowed`.
+  Leaving exactly at the cutoff is allowed. Steps use elapsed time, so DST
+  changes are handled. Without a departure, only arrival is checked and a
+  limitation says so.
+
+Not modeled: OPH, NW, CPP, SuperSaver, AMYRV, M, OB and other special permits;
+accessible placards; carpool registration; ParkMobile V (C7); posted closures.
+
+## Ranking
+
+1. **Candidates:** parking groups observed in the latest surveyed quarter
+   (`current_groups`). Older groups (e.g. 2018 level-by-level splits) may not
+   match today's allocation.
+2. **Filter:** registry status `supported`, eligibility `allowed`, walk at most
+   20 minutes (or the user's `max_walk_minutes`, 3–20), and an availability
+   estimate present. Skipped counts are in `result.counts` for debugging and
+   notebooks (not part of the API response): `not_supported`, `not_allowed`,
+   `needs_verification`, `too_far`, `missing_estimate`, `scored`, and with
+   routing `too_far_routed` and `route_unavailable` (locations sent to the
+   router that got no route). Missing estimates are never filled in.
+3. **Walking time:** straight-line distance × 13 min/km + 2 min, minimum
+   3 min — the website's formula. It is an approximation, not a routed path.
+   Unknown when the destination has no coordinates. Pins marked approximate
+   (Gliderport) are labeled in the explanation.
+4. **Score** (0-1), same weights as the website:
+   `a × availability + w × walk score`, where walk score is
+   `(20 − minutes) / 20` clipped to 0-1 and `(a, w)` comes from the request's
+   `preference` (`PREFERENCE_WEIGHTS`): `balanced` (default) 0.65/0.35, the
+   original prototype weights; `shorter_walk` 0.20/0.80; `more_availability`
+   0.85/0.15. The walk score always scales against 20 minutes, even with a
+   shorter personal limit. With no destination, availability alone
+   is the score. If only some candidates have walking times, unknown walks
+   score 0.
+5. **One group per location:** the location's best-scoring eligible group
+   represents it. First choice and backup are always different locations.
+   The response's `options` lists up to 12 ranked locations (first choice and
+   backup included) with `rank`, `walking_time_source` and a `fit_reason`, so
+   the website can show any ranked pin's estimate. A fit reason is built from
+   the final order: the first choice is compared with the runner-up and every
+   other option with the first choice (for example "16 min walk (mapped path);
+   53% open in past surveys. Ranks below Pangea Parking Structure: 7 min longer
+   walk, though more space (53% vs 9% open)."). It states only measured
+   differences, never "shortest" or "most" across the list, and never says an
+   option ranks higher or lower than its rank. Walks are compared only when
+   both are the same kind (mapped path vs straight-line estimate) and each walk
+   is labeled with its kind. The chosen preference only decides which
+   difference is listed first. Percentages are shares of spaces open in past
+   surveys, never a chance of finding a space. The summary sentence keeps its
+   original wording for `balanced`; the other preferences add "(shorter walk
+   first)" or "(more space first)".
+   **Routed walks (Issue #25):** when the backend has routing configured, the
+   top 5 locations by this straight-line score get mapped walking routes
+   (`walk_router` in `src/routing.py`, in parallel, through the shared FOSSGIS
+   throttle). Routes over 20 minutes are dropped; the rest are rescored with
+   the routed minutes (the directions box's number: duration rounded to 0.1 min,
+   then up, at least 1) and re-sorted, and their explanations say
+   "walking route". Straight-line estimates are usually, but not always,
+   shorter than mapped paths (paths were 1.2–1.4× the straight line in the
+   pilot), so a location outside the top 5 can still rise to first choice or
+   backup, for example when routed top-5 walks are long. Ranking therefore
+   routes the current first choice and backup again whenever either is not yet
+   checked, up to 3 more rounds (at most 11 routes per request), all within
+   one 8-second budget per request. A pick whose route failed, was rejected or
+   was not reached in time keeps its straight-line time, is labeled
+   "walk (straight-line, unchecked)" in its explanation, and gets a limitation
+   saying its mapped path was not checked against the 20-minute limit. The
+   limit is only described as checked by mapped path for routed picks. If every
+   route in a routing round fails, the server logs a warning with the reasons.
+   If routing drops every location, the result is `no_suitable_location` with
+   a limitation saying how many were over the limit by mapped path (never
+   `predictions_unavailable`, which only means no eligible group had an
+   estimate). Routed minutes skip the straight-line formula's 2-minute buffer
+   and 3-minute floor, so when routed and straight-line walks are ranked
+   together they are on slightly different scales; each pick's label says
+   which it is.
+   Without routing, behavior is unchanged.
+6. **Ties:** higher score, then higher availability, then shorter walk, then
+   `location_id` alphabetically, so results are deterministic.
+
+Explanations stay under the API's 200-character limit and name the permitted
+stall type and cutoff (e.g. "valid in B stalls until Wed 8:00 AM"). Choices at
+or below 10% expected availability say "Often nearly full."
+
+## Estimates and their labels
+
+`src/availability.AvailabilityEstimator` wraps the Issue #11 historical-average
+baseline. Per request it uses the nearest survey time (8:00, 10:00, 12:00,
+2:00; ties go earlier) and the quarter from the official calendar (none during
+breaks), then records `estimate_basis`, `estimate_survey_time` and
+`estimate_note`. A note appears whenever an estimate is not a full match at
+the requested time: a different survey time, an arrival outside survey hours
+("2:00 PM surveys; none cover 10:00 PM"), or a broader fallback average. Ranking
+shows the note in the choice's explanation and adds "First choice estimate is
+limited: ..." to the limitations. If the note does not fit the 200-character
+explanation, "(limited estimate)" is used and the backup comparison may be
+dropped; the limitation always has the full note.
+
+## Limitations
+
+- Estimates come from historical surveys at four times a day, mostly the start
+  of each quarter; they are not live availability. Limited estimates are
+  labeled (see above).
+- Permit rules are simplified from official pages and can be overridden by
+  posted signs, closures and events.
+- Weights (65/35) and the 20-minute limit are product choices carried over
+  from the prototype, not tuned against user data. The `shorter_walk`
+  (20/80) and `more_availability` (85/15) weights were added after Yra's
+  website review (2026-11-05) as starting points; how to present the
+  tradeoff is being reviewed with the experts.
+
+## Adding or changing a preference
+
+A preference is one entry in `src.ranking.PREFERENCE_WEIGHTS`, mapping its name
+to `(availability weight, walking weight)`. The API schema's allowed values,
+the CLI's `--preference` choices and the walk/availability scoring are all
+built from that dict, so these are the only steps:
+
+1. Add the entry (weights should sum to 1) and a short label in
+   `PREFERENCE_LABELS`, and a constant for the name like `SHORTER_WALK`.
+2. Fit reasons need no new text: they are built from the final ranking. If the
+   preference should list the walk or the space difference first, adjust the
+   order in `_differences` (`MORE_AVAILABILITY` lists space first).
+3. Add the matching option to the website (`PRIORITY_OPTIONS` in
+   ParkSmart-Website `src/constants.ts`, same weights) and sync `frontend/`;
+   `test_website_priority_weights_match_the_backend` fails if they differ.
+4. Try it: `python -m src.recommender --permit S --arrival 2026-11-17T10:00
+   --lat 32.8811 --lon -117.2376 --preference <name>`.
+
+Ranking cost does not depend on the preference: one pass over the candidate
+groups, at most `MAX_RANKED_OPTIONS` (12) options explained, about 2 ms per
+request on the local dataset.

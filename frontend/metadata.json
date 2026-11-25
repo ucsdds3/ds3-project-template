@@ -1,0 +1,6 @@
+{
+  "name": "ParkSmart",
+  "description": "UCSD parking planner powered by a hosted API, using historical survey estimates to compare parking options and walking times.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

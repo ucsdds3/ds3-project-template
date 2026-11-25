@@ -1,0 +1,262 @@
+"""Pydantic v2 models shared by HTTP endpoints and future services.
+
+All models reject unknown fields so interface spelling mistakes fail visibly.
+Unknown measurements are represented by None (JSON null), never zero.
+"""
+
+from datetime import datetime, timezone
+from typing import Annotated, List, Literal, Optional
+from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from src.eligibility import PERMIT_TYPES
+from src.ranking import (BALANCED, MAX_WALK_MINUTES, MIN_WALK_LIMIT_MINUTES,
+                         PREFERENCES)
+
+UCSD_TIME_ZONE = "America/Los_Angeles"
+LOCAL_ZONE = ZoneInfo(UCSD_TIME_ZONE)
+Text = Annotated[str, Field(min_length=1, max_length=200)]
+#: What the user prioritizes. Built from src.ranking.PREFERENCES, so adding a
+#: preference there is the only change the API schema needs.
+Preference = Literal[PREFERENCES]
+
+
+class APIModel(BaseModel):
+    """Base JSON object; keyword fields are validated and serialized by Pydantic."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class Coordinates(APIModel):
+    """A complete WGS84 latitude/longitude pair supplied as keyword fields."""
+
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+
+class PlaceInput(APIModel):
+    """User-supplied destination or origin, without inferred geocoding results."""
+
+    name: Text
+    coordinates: Optional[Coordinates] = None
+
+
+class ParkingLocation(APIModel):
+    """Catalog ID and display name; coordinates are populated only when verified."""
+
+    location_id: Text
+    name: Text
+    coordinates: Optional[Coordinates] = None
+
+
+class HealthResponse(APIModel):
+    """Process liveness response, independent of data and model readiness."""
+
+    status: Literal["ok"] = "ok"
+
+
+class ReadinessResponse(APIModel):
+    """Resource readiness, without exposing file paths or secret configuration."""
+
+    status: Literal["ready", "unavailable"]
+    catalog_ready: bool
+    predictions_ready: bool
+    prediction_mode: Literal["baseline", "saved", "provided"]
+
+
+class LocationsResponse(APIModel):
+    """Location catalog envelope with explicit source status and limitations."""
+
+    schema_version: Literal["0.1"] = "0.1"
+    data_status: Literal["sample", "verified"]
+    locations: List[ParkingLocation]
+    limitations: List[Text]
+
+    @model_validator(mode="after")
+    def unique_ids(self):
+        """Check this catalog's IDs and return the validated catalog."""
+        ids = [location.location_id for location in self.locations]
+        if len(ids) != len(set(ids)):
+            raise ValueError("location_id must be unique within the catalog")
+        return self
+
+
+class RecommendationRequest(APIModel):
+    """Validated trip inputs; eligibility is evaluated by the recommender."""
+
+    destination: PlaceInput
+    arrival_time: datetime = Field(
+        description="ISO 8601 datetime. Without an offset, interpreted in "
+        "America/Los_Angeles. Explicit offsets identify an instant and are "
+        "converted to UCSD local time. DST-ambiguous local times need an offset."
+    )
+    permit_type: Text = Field(
+        description="Supported permit: A, B, S, SR, D or V (pay-station visitor)."
+    )
+    starting_location: Optional[PlaceInput] = Field(
+        default=None, description="Accepted but not used for routing or ranking yet."
+    )
+    preference: Preference = Field(
+        default=BALANCED,
+        description="shorter_walk, balanced (default; the original weights) or "
+        "more_availability: how walking time and past availability are weighed.",
+    )
+    max_walk_minutes: Optional[int] = Field(
+        default=None, ge=MIN_WALK_LIMIT_MINUTES, le=MAX_WALK_MINUTES,
+        description=f"Personal walking limit in minutes; null means the "
+        f"{MAX_WALK_MINUTES}-minute default.",
+    )
+
+    @field_validator("permit_type")
+    @classmethod
+    def supported_permit(cls, value: str) -> str:
+        """Validate a trimmed permit against the eligibility module's codes."""
+        if value not in PERMIT_TYPES:
+            raise ValueError(f"Supported permit codes: {', '.join(PERMIT_TYPES)}")
+        return value
+
+    @field_validator("arrival_time", mode="before")
+    @classmethod
+    def require_iso_datetime(cls, value):
+        """Reject timestamps/date-only input; return an ISO string or datetime."""
+        if isinstance(value, datetime):
+            return value
+        if not isinstance(value, str) or "T" not in value:
+            raise ValueError("Use an ISO 8601 datetime containing T")
+        return value
+
+    @field_validator("arrival_time")
+    @classmethod
+    def interpret_ucsd_time(cls, value: datetime) -> datetime:
+        """Normalize an arrival datetime to UCSD time, rejecting invalid DST input."""
+        if value.tzinfo is not None:
+            return value.astimezone(LOCAL_ZONE)
+        # Round trips detect the missing spring hour; two valid offsets detect
+        # the repeated autumn hour. An explicit offset resolves that ambiguity.
+        candidates = []
+        for fold in (0, 1):
+            candidate = value.replace(tzinfo=LOCAL_ZONE, fold=fold)
+            restored = candidate.astimezone(timezone.utc).astimezone(LOCAL_ZONE)
+            if restored.replace(tzinfo=None) == value:
+                candidates.append(candidate)
+        if not candidates:
+            raise ValueError("Arrival time does not exist in UCSD local time")
+        if len({candidate.utcoffset() for candidate in candidates}) > 1:
+            raise ValueError("Ambiguous UCSD local time; include an explicit offset")
+        return candidates[0]
+
+
+class ParkingChoice(APIModel):
+    """One future recommendation, with optional estimates and an explanation."""
+
+    location: ParkingLocation
+    estimated_available_fraction: Optional[float] = Field(
+        default=None, ge=0, le=1, allow_inf_nan=False,
+        description="Fraction from 0 to 1, not a percentage or guarantee."
+    )
+    estimated_walking_minutes: Optional[float] = Field(
+        default=None, ge=0, allow_inf_nan=False
+    )
+    walking_time_source: Optional[Literal[
+        "routed", "straight_line", "straight_line_unchecked"]] = Field(
+        default=None, description="routed: mapped walking path. straight_line: "
+        "estimate (routing off). straight_line_unchecked: routing was on but "
+        "this path was not checked. Null when there is no walking time."
+    )
+    explanation: Text
+    fit_reason: Optional[Text] = Field(
+        default=None, description="Why this location ranks where it does for "
+        "the chosen preference. Percentages are past survey shares, not a chance."
+    )
+    rank: Optional[int] = Field(default=None, ge=1)
+
+
+class RecommendationResponse(APIModel):
+    """Future result envelope; status controls whether parking choices exist."""
+
+    schema_version: Literal["0.1"] = "0.1"
+    # predictions_unavailable: eligible parking exists but none has an estimate
+    # (src.ranking, Issue #20). Like no_suitable_location, it has no choices.
+    status: Literal["ready", "no_suitable_location", "not_implemented",
+                    "predictions_unavailable"]
+    is_example: bool
+    arrival_time: datetime
+    time_zone: Literal["America/Los_Angeles"] = UCSD_TIME_ZONE
+    preference: Preference = BALANCED
+    max_walk_minutes: int = Field(default=MAX_WALK_MINUTES, ge=1)
+    first_choice: Optional[ParkingChoice] = None
+    backup_choice: Optional[ParkingChoice] = None
+    options: List[ParkingChoice] = Field(
+        default_factory=list, description="Ranked locations, best first, "
+        "including the first choice and backup; empty unless ready.")
+    explanation: Text
+    limitations: List[Text]
+
+    @model_validator(mode="after")
+    def check_choices(self):
+        """Validate status/choice consistency and return this response object."""
+        if self.arrival_time.tzinfo is None:
+            raise ValueError("Response arrival_time must include a UTC offset")
+        self.arrival_time = self.arrival_time.astimezone(LOCAL_ZONE)
+        if self.status == "ready" and self.first_choice is None:
+            raise ValueError("ready requires first_choice")
+        if self.status != "ready" and (
+            self.first_choice is not None or self.backup_choice is not None
+        ):
+            raise ValueError("Unavailable results cannot contain parking choices")
+        if self.status != "ready" and self.options:
+            raise ValueError("Unavailable results cannot contain ranked options")
+        if self.backup_choice and (
+            self.backup_choice.location.location_id
+            == self.first_choice.location.location_id
+        ):
+            raise ValueError("Backup must differ from first choice")
+        if self.options:
+            # Clients show options as ranked pins; keep their order trustworthy
+            ids = [option.location.location_id for option in self.options]
+            if len(set(ids)) != len(ids):
+                raise ValueError("Ranked options must be distinct locations")
+            if ids[0] != self.first_choice.location.location_id or (
+                    self.backup_choice and (
+                        len(ids) < 2
+                        or ids[1] != self.backup_choice.location.location_id)):
+                raise ValueError("Options must start with the first choice "
+                                 "and the backup")
+            ranks = [option.rank for option in self.options]
+            if any(rank is not None for rank in ranks) and ranks != list(
+                    range(1, len(ranks) + 1)):
+                raise ValueError("Option ranks must run 1, 2, 3, ... in order")
+        return self
+
+
+class RouteRequest(APIModel):
+    """One driving or walking trip between two coordinates.
+
+    The website asks for two routes per parking choice: driving from the
+    user's start to the parking location, and walking from the parking
+    location to the destination. Parking ends use registry coordinates.
+    """
+
+    mode: Literal["driving", "walking"]
+    origin: Coordinates
+    destination: Coordinates
+
+
+class RouteResponse(APIModel):
+    """A routed path for drawing on a map, with distance and typical duration.
+
+    ``geometry`` is GeoJSON LineString order: ``[longitude, latitude]`` pairs.
+    Durations come from road/path speeds, not live traffic.
+    """
+
+    schema_version: Literal["0.1"] = "0.1"
+    mode: Literal["driving", "walking"]
+    distance_meters: float = Field(ge=0, allow_inf_nan=False)
+    distance_miles: float = Field(ge=0, allow_inf_nan=False)
+    duration_minutes: float = Field(ge=0, allow_inf_nan=False)
+    geometry: List[List[float]] = Field(min_length=2)
+    traffic_aware: Literal[False] = False
+    provider: Text
+    attribution: Text
+    limitations: List[Text]
